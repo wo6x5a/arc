@@ -3,6 +3,7 @@ import TelegramBot from 'node-telegram-bot-api'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { SessionManager } from './session.js'
 import { ClaudeRunner } from './claude-runner.js'
+import { getGitStatus, gitCommit } from './git-helper.js'
 
 const token = process.env.TELEGRAM_BOT_TOKEN
 const allowedUserIds = (process.env.ALLOWED_USER_IDS || '').split(',').map(id => parseInt(id.trim()))
@@ -175,6 +176,30 @@ bot.on('callback_query', async (callbackQuery) => {
       }
     )
   }
+
+  if (data.startsWith('git_commit_')) {
+    try {
+      const hash = await gitCommit(claudeRunner.workDir, 'chore: auto commit by claude code bridge')
+      await bot.editMessageText(
+        `已提交 commit: ${hash}`,
+        { chat_id: chatId, message_id: callbackQuery.message.message_id }
+      )
+    } catch (err) {
+      await bot.editMessageText(
+        `提交失败：${err.message}`,
+        { chat_id: chatId, message_id: callbackQuery.message.message_id }
+      )
+    }
+    return
+  }
+
+  if (data.startsWith('git_skip_')) {
+    await bot.editMessageText('已跳过提交', {
+      chat_id: chatId,
+      message_id: callbackQuery.message.message_id
+    })
+    return
+  }
 })
 
 // 处理普通消息（执行任务）
@@ -256,6 +281,23 @@ bot.on('message', async (msg) => {
           const lines = Object.entries(labelCounts).map(([label, n]) => n > 1 ? `  ${label} x${n}` : `  ${label}`)
           const summary = `执行摘要\n用时：${duration} 秒\n操作：\n${lines.join('\n')}`
           await bot.sendMessage(chatId, summary).catch(() => {})
+          // 检查是否有 git 变更，提示是否 commit
+          const gitStatus = await getGitStatus(claudeRunner.workDir)
+          if (gitStatus && gitStatus.hasChanges) {
+            const fileList = gitStatus.files.slice(0, 5).join('\n')
+            const more = gitStatus.files.length > 5 ? `\n...等共 ${gitStatus.files.length} 个文件` : ''
+            await bot.sendMessage(chatId,
+              `检测到文件变更：\n${fileList}${more}\n\n是否自动 git commit？`,
+              {
+                reply_markup: {
+                  inline_keyboard: [[
+                    { text: '✅ 提交', callback_data: `git_commit_${chatId}` },
+                    { text: '❌ 不提交', callback_data: `git_skip_${chatId}` }
+                  ]]
+                }
+              }
+            ).catch(() => {})
+          }
         },
       })
 

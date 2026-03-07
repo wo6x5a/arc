@@ -11,7 +11,7 @@ function formatToolLabel(toolName, input) {
     Bash: () => `执行命令: ${String(input?.command || '').slice(0, 40)}`,
     Glob: () => `搜索文件: ${input?.pattern || ''}`,
     Grep: () => `搜索内容: ${input?.pattern || ''}`,
-    WebFetch: () => `请求 URL`,
+    WebFetch: () => `请求 URL: ${input?.url || ''}`,
   }
   return (map[toolName] ?? (() => `调用: ${toolName}`))()
 }
@@ -141,7 +141,7 @@ export class ClaudeRunner {
             await flushBuffer()
             if (!msg.is_error && onSummary) {
               const duration = Math.round((Date.now() - stats.startTime) / 1000)
-              onSummary({ toolCalls: stats.toolCalls, duration, sessionId: claudeSessionId })
+              await onSummary({ toolCalls: stats.toolCalls, duration, sessionId: claudeSessionId }).catch(err => console.error('[runner] onSummary 错误:', err))
             }
             if (msg.is_error) {
               reject(new Error(msg.result || '执行失败'))

@@ -177,7 +177,7 @@ bot.on('callback_query', async (callbackQuery) => {
     )
   }
 
-  if (data.startsWith('git_commit_')) {
+  if (data === 'git_commit') {
     try {
       const hash = await gitCommit(claudeRunner.workDir, 'chore: auto commit by claude code bridge')
       await bot.editMessageText(
@@ -193,7 +193,7 @@ bot.on('callback_query', async (callbackQuery) => {
     return
   }
 
-  if (data.startsWith('git_skip_')) {
+  if (data === 'git_skip') {
     await bot.editMessageText('已跳过提交', {
       chat_id: chatId,
       message_id: callbackQuery.message.message_id
@@ -291,8 +291,8 @@ bot.on('message', async (msg) => {
               {
                 reply_markup: {
                   inline_keyboard: [[
-                    { text: '✅ 提交', callback_data: `git_commit_${chatId}` },
-                    { text: '❌ 不提交', callback_data: `git_skip_${chatId}` }
+                    { text: '✅ 提交', callback_data: 'git_commit' },
+                    { text: '❌ 不提交', callback_data: 'git_skip' }
                   ]]
                 }
               }

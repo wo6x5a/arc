@@ -204,7 +204,7 @@ bot.on('message', async (msg) => {
 
     // 心跳
     let dots = 0
-    const heartbeat = setInterval(async () => {
+    let heartbeat = setInterval(async () => {
       dots = (dots + 1) % 4
       const dotStr = '.'.repeat(dots + 1)
       try {
@@ -228,20 +228,32 @@ bot.on('message', async (msg) => {
           }
         },
         onProgress: (label) => {
+          // 重置心跳（清除旧的，立即更新消息，再启一个新的）
           clearInterval(heartbeat)
           bot.editMessageText(`⏳ ${label}`, {
             chat_id: chatId,
             message_id: statusMsg.message_id
           }).catch(() => {})
+          dots = 0
+          heartbeat = setInterval(async () => {
+            dots = (dots + 1) % 4
+            const dotStr = '.'.repeat(dots + 1)
+            try {
+              await bot.editMessageText(`⏳ ${label}${dotStr}`, {
+                chat_id: chatId,
+                message_id: statusMsg.message_id
+              })
+            } catch {}
+          }, 8000)
         },
         onSummary: async ({ toolCalls, duration }) => {
           if (toolCalls.length === 0) return
-          const counts = {}
-          for (const { name } of toolCalls) {
-            counts[name] = (counts[name] || 0) + 1
+          // 用 label 聚合，直接显示已格式化的中文标签
+          const labelCounts = {}
+          for (const { label } of toolCalls) {
+            labelCounts[label] = (labelCounts[label] || 0) + 1
           }
-          const nameMap = { Read: '读取文件', Write: '写入文件', Edit: '编辑文件', Bash: '执行命令', Glob: '搜索文件', Grep: '搜索内容', WebFetch: '请求 URL' }
-          const lines = Object.entries(counts).map(([name, n]) => `  ${nameMap[name] || name} x${n}`)
+          const lines = Object.entries(labelCounts).map(([label, n]) => n > 1 ? `  ${label} x${n}` : `  ${label}`)
           const summary = `执行摘要\n用时：${duration} 秒\n操作：\n${lines.join('\n')}`
           await bot.sendMessage(chatId, summary).catch(() => {})
         },

@@ -171,6 +171,17 @@ Bot：当前工作目录：/Users/your_username/project-a
 Bot：已切换到：项目B
 ```
 
+### 自定义工作目录
+
+不在预设列表里的目录，可以用 `/cd` 命令直接切换：
+
+```
+你：/cd /Users/your_username/some-other-project
+
+Bot：✅ 已切换工作目录：/Users/your_username/some-other-project
+     对话历史已自动清除
+```
+
 ## 命令列表
 
 ### 基础命令
@@ -179,6 +190,7 @@ Bot：已切换到：项目B
 |------|------|
 | `/help` | 显示所有命令帮助 |
 | `/projects` | 列出预设项目，点按钮切换工作目录 |
+| `/cd <路径>` | 切换到任意自定义工作目录 |
 | `/clear` | 清除对话历史，开始新对话 |
 | `/stop` | 中止当前任务并清空队列 |
 | `/status` | 查看当前状态（是否执行中、队列情况、是否有对话历史） |
@@ -229,7 +241,33 @@ Bot：已切换到：项目B
 
 > `/tunnel` 需要在 `.env` 配置 `NGROK_AUTHTOKEN`，从 [ngrok.com](https://dashboard.ngrok.com) 免费注册获取。
 
-## 开机自启（可选）
+## 进程管理（推荐）
+
+使用 PM2 管理进程，崩溃后自动重启：
+
+```bash
+npm install -g pm2
+
+# 启动（自动重启）
+npm run pm2:start
+
+# 常用命令
+npm run pm2:status   # 查看状态
+npm run pm2:logs     # 查看日志
+npm run pm2:restart  # 手动重启
+npm run pm2:stop     # 停止
+```
+
+### 开机自启
+
+```bash
+pm2 startup   # 生成开机自启命令（按提示执行）
+pm2 save      # 保存当前进程列表
+```
+
+PM2 配置文件为项目根目录的 `ecosystem.config.cjs`，崩溃后默认等待 3 秒重启，连续失败 10 次后停止重试。
+
+## 开机自启（不用 PM2 的方案）
 
 ```bash
 npm install -g pm2

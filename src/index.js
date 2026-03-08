@@ -40,13 +40,27 @@ bot.on('polling_error', (err) => {
   console.error('[Telegram] 轮询错误（自动重试中）:', err.code || err.message)
 })
 
+// 拦截所有未捕获的 Promise rejection，防止 TLS/网络抖动导致进程崩溃
+process.on('unhandledRejection', (reason) => {
+  const code = reason?.code || reason?.cause?.code
+  const msg = reason?.message || String(reason)
+  // TLS/网络瞬断属于 Telegram 轮询的正常抖动，记录日志后忽略
+  if (code === 'EFATAL' || code === 'ECONNRESET' || code === 'ECONNREFUSED' || code === 'ETIMEDOUT') {
+    console.error('[网络抖动] 忽略并继续（自动重试中）:', code, msg.slice(0, 100))
+    return
+  }
+  console.error('[未处理的 Promise rejection]', reason)
+})
+
 const sessionManager = new SessionManager()
 const claudeRunner = new ClaudeRunner(defaultWorkDir)
 
 // 每个 chatId 对应的 claude session_id，用于多轮对话 resume
 const claudeSessionMap = new Map()
 
-// 待确认的权限请求 key -> { resolve }
+// 待输入自定义目录的 chatId 集合（等待用户回复路径）
+const pendingCustomDir = new Map() // chatId -> promptMessageId
+
 const pendingPermissions = new Map()
 
 // 当前正在执行任务的 chatId（用于 hook 服务器路由权限请求）
@@ -114,6 +128,7 @@ bot.onText(/\/start/, async (msg) => {
     `直接发送消息即可让 Claude Code 执行任务。\n\n` +
     `命令：\n` +
     `/projects - 切换工作项目\n` +
+    `/cd <路径> - 切换到自定义工作目录\n` +
     `/clear - 清除对话历史，开始新对话\n` +
     `/stop - 中止当前任务\n` +
     `/status - 查看当前状态\n\n` +
@@ -134,6 +149,7 @@ bot.onText(/\/help/, async (msg) => {
     `命令列表：\n\n` +
     `基础命令：\n` +
     `/projects - 列出预设项目，点按钮切换工作目录\n` +
+    `/cd <路径> - 切换到自定义工作目录\n` +
     `/clear - 清除对话历史，开始新对话\n` +
     `/stop - 中止当前任务并清空队列\n` +
     `/status - 查看当前状态（是否执行中、队列、是否有历史）\n\n` +
@@ -212,11 +228,34 @@ bot.onText(/\/projects/, async (msg) => {
     const isCurrent = proj.path === claudeRunner.workDir
     return [{ text: isCurrent ? `✅ ${proj.name}` : proj.name, callback_data: `switch_project_${index}` }]
   })
+  inline_keyboard.push([{ text: '📁 自定义目录...', callback_data: 'switch_project_custom' }])
 
   await bot.sendMessage(chatId,
     `当前工作目录：${claudeRunner.workDir}\n\n请选择要切换的项目：`,
     { reply_markup: { inline_keyboard } }
   )
+})
+
+// 处理 /cd 命令 - 切换到自定义工作目录
+bot.onText(/\/cd(?:\s+(.+))?/, async (msg, match) => {
+  const chatId = msg.chat.id
+  const userId = msg.from.id
+  if (!isAuthorized(userId)) return
+
+  const targetPath = match[1] ? match[1].trim() : null
+  if (!targetPath) {
+    return bot.sendMessage(chatId, `当前工作目录：${claudeRunner.workDir}\n\n用法: /cd <路径>\n例: /cd /Users/me/myproject`)
+  }
+
+  try {
+    const { stdout } = await execAsync(`cd '${targetPath.replace(/'/g, `'\\''`)}' && pwd`)
+    const resolvedPath = stdout.trim()
+    claudeRunner.setWorkDir(resolvedPath)
+    claudeSessionMap.delete(chatId)
+    await bot.sendMessage(chatId, `✅ 已切换工作目录：${resolvedPath}\n对话历史已自动清除`)
+  } catch {
+    await bot.sendMessage(chatId, `❌ 路径无效或无权限访问：${targetPath}`)
+  }
 })
 
 // 处理 /test 命令 - 在当前工作目录运行测试/构建/lint
@@ -349,6 +388,14 @@ bot.on('callback_query', async (callbackQuery) => {
   const data = callbackQuery.data
   await bot.answerCallbackQuery(callbackQuery.id)
 
+  if (data === 'switch_project_custom') {
+    const promptMsg = await bot.sendMessage(chatId, '请输入要切换的目录路径：', {
+      reply_markup: { force_reply: true, selective: true }
+    })
+    pendingCustomDir.set(chatId, promptMsg.message_id)
+    return
+  }
+
   if (data.startsWith('switch_project_')) {
     const index = parseInt(data.replace('switch_project_', ''))
     const project = projects[index]
@@ -389,7 +436,6 @@ bot.on('callback_query', async (callbackQuery) => {
 
 // 处理普通消息（执行任务）
 bot.on('message', async (msg) => {
-  if (msg.text && msg.text.startsWith('/')) return
   const chatId = msg.chat.id
   const userId = msg.from.id
   if (!isAuthorized(userId)) {
@@ -398,6 +444,32 @@ bot.on('message', async (msg) => {
 
   const userMessage = msg.text || ''
   if (!userMessage.trim()) return
+
+  // 处理「自定义目录」输入（优先，路径可能以 / 开头）
+  if (pendingCustomDir.has(chatId)) {
+    // Telegram 命令格式：/word（只有一个斜杠且无空格）；路径格式：/Users/foo/bar（含多个斜杠）
+    const isCommand = /^\/[^/\s]+$/.test(userMessage.trim())
+    if (isCommand) {
+      // 取消等待，让消息继续走下面的命令过滤流程
+      pendingCustomDir.delete(chatId)
+    } else {
+      pendingCustomDir.delete(chatId)
+      const targetPath = userMessage.trim()
+      try {
+        const { stdout } = await execAsync(`cd '${targetPath.replace(/'/g, `'\\''`)}' && pwd`)
+        const resolvedPath = stdout.trim()
+        claudeRunner.setWorkDir(resolvedPath)
+        claudeSessionMap.delete(chatId)
+        await bot.sendMessage(chatId, `✅ 已切换工作目录：${resolvedPath}\n对话历史已自动清除`)
+      } catch {
+        await bot.sendMessage(chatId, `❌ 路径无效或无权限访问：${targetPath}`)
+      }
+      return
+    }
+  }
+
+  // 过滤 / 开头的命令消息
+  if (msg.text && msg.text.startsWith('/')) return
 
   // 如果当前有任务在跑，提示加入队列
   const pendingBefore = sessionManager.pendingCount(chatId)

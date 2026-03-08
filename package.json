@@ -6,7 +6,12 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "pm2:start": "pm2 start ecosystem.config.cjs",
+    "pm2:stop": "pm2 stop arc",
+    "pm2:restart": "pm2 restart arc",
+    "pm2:logs": "pm2 logs arc",
+    "pm2:status": "pm2 status"
   },
   "dependencies": {
     "@ngrok/ngrok": "^1.7.0",

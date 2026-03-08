@@ -1,0 +1,19 @@
+{
+  "name": "arc",
+  "version": "1.0.0",
+  "description": "ARC (AI Remote Coding) - Control AI coding agents via messaging apps",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@ngrok/ngrok": "^1.7.0",
+    "dotenv": "^16.4.5",
+    "https-proxy-agent": "^7.0.6",
+    "node-pty": "^1.1.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "playwright": "^1.58.2"
+  }
+}

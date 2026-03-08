@@ -1,25 +1,31 @@
 import { spawn } from 'child_process'
 import { createInterface } from 'readline'
+import { realpathSync } from 'fs'
 
-const CLAUDE_BIN = process.env.CLAUDE_BIN || 'claude'
+const NODE_BIN = realpathSync(process.execPath)
+const CLAUDE_CLI = realpathSync(process.env.CLAUDE_BIN || '/Users/chenwu.lcw/.npm-global/bin/claude')
+
+// notify: --dangerously-skip-permissions + 事后通知（默认，稳定）
+// confirm: PreToolUse hook 拦截确认（需要 hook 服务器）
+const PERMISSION_MODE = process.env.PERMISSION_MODE || 'notify'
 
 function formatToolLabel(toolName, input) {
   const map = {
-    Read: () => `读取文件: ${input?.file_path?.split('/').pop() || ''}`,
-    Write: () => `写入文件: ${input?.file_path?.split('/').pop() || ''}`,
-    Edit: () => `编辑文件: ${input?.file_path?.split('/').pop() || ''}`,
-    Bash: () => `执行命令: ${String(input?.command || '').slice(0, 40)}`,
-    Glob: () => `搜索文件: ${input?.pattern || ''}`,
-    Grep: () => `搜索内容: ${input?.pattern || ''}`,
-    WebFetch: () => `请求 URL: ${input?.url || ''}`,
+    Read:      () => `读取文件: ${input?.file_path || ''}`,
+    Write:     () => `写入文件: ${input?.file_path || ''}`,
+    Edit:      () => `编辑文件: ${input?.file_path || ''}`,
+    MultiEdit: () => `编辑文件: ${input?.file_path || ''}`,
+    Bash:      () => `执行命令: ${String(input?.command || '').slice(0, 80)}`,
+    Glob:      () => `搜索文件: ${input?.pattern || ''}`,
+    Grep:      () => `搜索内容: ${input?.pattern || ''}`,
+    WebFetch:  () => `请求 URL: ${input?.url || ''}`,
   }
-  return (map[toolName] ?? (() => `调用: ${toolName}`))()
+  return (map[toolName] ?? (() => `调用工具: ${toolName}`))(input)
 }
 
 /**
  * Claude Code 执行器
- * 通过子进程调用 claude -p CLI，解析 stream-json 输出
- * 支持通过 resumeSessionId 实现多轮对话
+ * 权限控制由 PreToolUse hook + hook-server.js 处理
  */
 export class ClaudeRunner {
   constructor(workDir) {
@@ -30,28 +36,49 @@ export class ClaudeRunner {
     this.workDir = workDir
   }
 
-  async run({ prompt, session, onOutput, onProgress, onSummary, resumeSessionId }) {
+  async run({ prompt, session, onOutput, onToolUse, resumeSessionId }) {
+    return this._runOnce({ prompt, session, onOutput, onToolUse, resumeSessionId })
+      .catch(async (err) => {
+        // session 过期导致失败时，自动用新 session 重试
+        if (resumeSessionId && !session.abortController.signal.aborted) {
+          console.log(`[runner] 会话恢复失败，自动重新开始新对话：${err.message}`)
+          return this._runOnce({ prompt, session, onOutput, onToolUse, resumeSessionId: null })
+        }
+        throw err
+      })
+  }
+
+  async _runOnce({ prompt, session, onOutput, onToolUse, resumeSessionId }) {
     return new Promise((resolve, reject) => {
-      const env = { ...process.env, CLAUDECODE: '' }
+      const env = {
+        ...process.env,
+        CLAUDECODE: '',
+        TELEGRAM_BRIDGE_SESSION: '1',
+        HOOK_SERVER_URL: process.env.HOOK_SERVER_URL || 'http://127.0.0.1:7701',
+      }
 
-      const args = [
-        '-p', prompt,
-        '--output-format', 'stream-json',
-        '--verbose',
-        '--dangerously-skip-permissions',
-      ]
-
+      const escapedPrompt = prompt.replace(/'/g, `'\\''`)
+      const extraArgs = resumeSessionId ? `--resume ${resumeSessionId}` : ''
       if (resumeSessionId) {
-        args.push('--resume', resumeSessionId)
         console.log(`[runner] 恢复会话 session_id=${resumeSessionId}`)
       }
 
-      console.log(`[runner] 启动 claude，cwd=${this.workDir}，bin=${CLAUDE_BIN}`)
+      const skipPerms = PERMISSION_MODE !== 'confirm' ? '--dangerously-skip-permissions' : ''
+      // confirm 模式才设置 TELEGRAM_BRIDGE_SESSION，让 hook 只在 confirm 模式下生效
+      if (PERMISSION_MODE === 'confirm') {
+        env.TELEGRAM_BRIDGE_SESSION = '1'
+      }
+
+      console.log(`[runner] 启动 claude，cwd=${this.workDir}，mode=${PERMISSION_MODE}`)
       console.log(`[runner] prompt="${prompt.slice(0, 80)}"`)
 
-      const child = spawn(CLAUDE_BIN, args, {
+      // 系统提示：启动长期运行的服务时必须用后台模式，否则 claude 进程会阻塞
+      const systemPrompt = `--append-system-prompt "重要：如果需要启动长期运行的服务（如 npm run dev、npm start、python app.py 等），必须用后台方式运行，例如：nohup npm run dev > /tmp/app.log 2>&1 & 然后输出服务已在后台启动，PID 为 xxx。"`
+      const cmd = `'${NODE_BIN}' '${CLAUDE_CLI}' -p '${escapedPrompt}' --output-format stream-json --verbose ${skipPerms} ${systemPrompt} ${extraArgs}`
+      const child = spawn(cmd, {
         cwd: this.workDir,
         env,
+        shell: true,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
 
@@ -65,8 +92,7 @@ export class ClaudeRunner {
       let textBuffer = ''
       let flushTimer = null
       let hasOutput = false
-      let claudeSessionId = null  // 从输出中提取的 session_id，用于下次 resume
-      const stats = { toolCalls: [], startTime: Date.now() }
+      let claudeSessionId = null
 
       const flushBuffer = async () => {
         if (textBuffer.trim()) {
@@ -85,17 +111,11 @@ export class ClaudeRunner {
       rl.on('line', (line) => {
         if (!line.trim()) return
         let msg
-        try {
-          msg = JSON.parse(line)
-        } catch {
-          return
-        }
-
+        try { msg = JSON.parse(line) } catch { return }
         handleMessage(msg).catch(err => console.error('[claude-runner] 处理消息出错:', err))
       })
 
       async function handleMessage(msg) {
-        // 从任意消息里提取 session_id
         if (msg.session_id && !claudeSessionId) {
           claudeSessionId = msg.session_id
           console.log(`[runner] 获取到 session_id=${claudeSessionId}`)
@@ -104,14 +124,13 @@ export class ClaudeRunner {
         switch (msg.type) {
           case 'assistant': {
             for (const block of msg.message?.content || []) {
-              if (block.type === 'tool_use') {
-                const label = formatToolLabel(block.name, block.input)
-                stats.toolCalls.push({ name: block.name, label })
-                if (onProgress) onProgress(label)
-              }
               if (block.type === 'text' && block.text) {
                 textBuffer += block.text + '\n'
                 scheduleFlush()
+              }
+              if (block.type === 'tool_use' && onToolUse) {
+                const label = formatToolLabel(block.name, block.input)
+                onToolUse(label).catch(() => {})
               }
             }
             break
@@ -134,12 +153,10 @@ export class ClaudeRunner {
           case 'result': {
             if (flushTimer) clearTimeout(flushTimer)
             await flushBuffer()
-            if (!msg.is_error && onSummary) {
-              const duration = Math.round((Date.now() - stats.startTime) / 1000)
-              await onSummary({ toolCalls: stats.toolCalls, duration, sessionId: claudeSessionId }).catch(err => console.error('[runner] onSummary 错误:', err))
-            }
             if (msg.is_error) {
-              reject(new Error(msg.result || '执行失败'))
+              const errMsg = msg.result || msg.error || '执行失败（无错误信息）'
+              console.error('[runner] Claude 报错:', errMsg)
+              reject(new Error(errMsg))
             } else if (msg.result && !hasOutput) {
               await onOutput(msg.result)
             }
@@ -161,7 +178,7 @@ export class ClaudeRunner {
 
         if (session.abortController.signal.aborted) return
         if (code === 0) {
-          resolve(claudeSessionId)  // 返回 session_id 供下次 resume 使用
+          resolve(claudeSessionId)
         } else {
           reject(new Error(`claude 进程退出，退出码: ${code}`))
         }

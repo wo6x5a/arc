@@ -58,7 +58,7 @@ cp .env.example .env
 # Bot Token（必填）
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHI...
 
-# 白名单用户 ID，多个用逗号分隔（强烈建议填写）
+# 白名单用户 ID，多个用逗号分隔（必填，只有在白名单的用户才能使用你的 bot）
 ALLOWED_USER_IDS=123456789
 
 # Claude Code 默认工作目录
@@ -67,7 +67,7 @@ WORK_DIR=/Users/your_username/your_project
 # 预设项目列表，发送 /projects 可点按钮快速切换
 PROJECTS=[{"name":"项目A","path":"/Users/your_username/project-a"},{"name":"项目B","path":"/Users/your_username/project-b"}]
 
-# 国内访问 Telegram 必填，填本地代理地址
+# 国内访问 Telegram 必填，填本地代理地址,一般都是默认 7890，比如 clash
 HTTPS_PROXY=http://127.0.0.1:7890
 
 # 三方 API（不使用官方 Anthropic 账号时填写）
@@ -84,6 +84,7 @@ NGROK_AUTHTOKEN=your_ngrok_token
 ```
 
 ### 第四步：启动
+建议看下 【进程管理（推荐）】，用进程管理方式启动。
 
 ```bash
 npm start

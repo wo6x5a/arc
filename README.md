@@ -84,19 +84,11 @@ NGROK_AUTHTOKEN=your_ngrok_token
 ```
 
 ### 第四步：启动
-建议看下 【进程管理（推荐）】，用进程管理方式启动。
 
 ```bash
-npm start
-```
-
-看到以下输出即表示启动成功：
-
-```
-ARC 启动成功
-工作目录: /Users/your_username/your_project
-允许的用户 ID: 123456789
-预设项目数量: 2
+npm install -g pm2        # 首次需要全局安装 PM2
+npm run pm2:start         # 启动（后台运行，崩溃自动重启）
+npm run pm2:status        # 确认运行状态，显示 online 即成功
 ```
 
 ## 功能说明
@@ -223,17 +215,17 @@ Bot：✅ 已切换工作目录：/Users/your_username/some-other-project
 改完代码后，可以用以下命令验证：
 
 ```
-# 方案1：自动跑测试（探测 package.json scripts）
+# 自动跑测试（探测 package.json scripts）
 /test
 
-# 方案1：指定命令
+# 指定命令
 /test npm run build
 /test go test ./...
 
-# 方案2：截图网页（适合 UI 改动）
+# 截图网页（适合 UI 改动）
 /screenshot http://localhost:3000
 
-# 方案3：开内网穿透，手机直接访问
+# 开内网穿透，手机直接访问
 /tunnel 3000
 # Bot 返回：https://xxxx.ngrok-free.app
 # 之后截图可省略 URL
@@ -242,17 +234,11 @@ Bot：✅ 已切换工作目录：/Users/your_username/some-other-project
 
 > `/tunnel` 需要在 `.env` 配置 `NGROK_AUTHTOKEN`，从 [ngrok.com](https://dashboard.ngrok.com) 免费注册获取。
 
-## 进程管理（推荐）
+## 进程管理
 
 使用 PM2 管理进程，崩溃后自动重启：
 
 ```bash
-npm install -g pm2
-
-# 启动（自动重启）
-npm run pm2:start
-
-# 常用命令
 npm run pm2:status   # 查看状态
 npm run pm2:logs     # 查看日志
 npm run pm2:restart  # 手动重启
@@ -262,19 +248,19 @@ npm run pm2:stop     # 停止
 ### 开机自启
 
 ```bash
-pm2 startup   # 生成开机自启命令（按提示执行）
-pm2 save      # 保存当前进程列表
+pm2 startup   # 生成开机自启命令（按提示执行输出的命令）
+pm2 save      # 保存当前进程列表，重启后自动恢复
 ```
 
 PM2 配置文件为项目根目录的 `ecosystem.config.cjs`，崩溃后默认等待 3 秒重启，连续失败 10 次后停止重试。
 
-## 开机自启（不用 PM2 的方案）
+## 本地调试
+
+不需要 PM2 守护时，可以直接前台运行，日志会实时打印到终端：
 
 ```bash
-npm install -g pm2
-pm2 start src/index.js --name arc
-pm2 save
-pm2 startup
+npm start       # 前台运行，Ctrl+C 停止
+npm run dev     # 开发模式，文件改动自动重启
 ```
 
 ## 注意事项

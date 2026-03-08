@@ -84,7 +84,6 @@ export class ClaudeRunner {
 
       rl.on('line', (line) => {
         if (!line.trim()) return
-        console.log(`[runner] 收到行: ${line.slice(0, 120)}`)
         let msg
         try {
           msg = JSON.parse(line)
@@ -102,18 +101,15 @@ export class ClaudeRunner {
           console.log(`[runner] 获取到 session_id=${claudeSessionId}`)
         }
 
-        console.log(`[runner] 处理消息 type=${msg.type} subtype=${msg.subtype || '-'}`)
         switch (msg.type) {
           case 'assistant': {
             for (const block of msg.message?.content || []) {
-              console.log(`[runner] assistant block type=${block.type}`)
               if (block.type === 'tool_use') {
                 const label = formatToolLabel(block.name, block.input)
                 stats.toolCalls.push({ name: block.name, label })
                 if (onProgress) onProgress(label)
               }
               if (block.type === 'text' && block.text) {
-                console.log(`[runner] 收到文字: "${block.text.slice(0, 80)}"`)
                 textBuffer += block.text + '\n'
                 scheduleFlush()
               }
@@ -136,7 +132,6 @@ export class ClaudeRunner {
           }
 
           case 'result': {
-            console.log(`[runner] result: is_error=${msg.is_error}, hasOutput=${hasOutput}, result="${String(msg.result).slice(0, 80)}"`)
             if (flushTimer) clearTimeout(flushTimer)
             await flushBuffer()
             if (!msg.is_error && onSummary) {
@@ -146,7 +141,6 @@ export class ClaudeRunner {
             if (msg.is_error) {
               reject(new Error(msg.result || '执行失败'))
             } else if (msg.result && !hasOutput) {
-              console.log(`[runner] 使用兜底 result 字段发送`)
               await onOutput(msg.result)
             }
             break

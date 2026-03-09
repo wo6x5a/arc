@@ -1,25 +1,28 @@
 # ARC — AI Remote Coding
 
-通过 Telegram Bot 远程控制本机的 AI 编程助手（Claude Code等），在手机上发消息即可让 AI 帮你读代码、写代码、执行命令、提交代码等。
+通过 Telegram Bot 远程控制本机的 AI 编程助手（Claude Code、Gemini CLI、Qwen Code、Codex 等），在手机上发消息即可让 AI 帮你读代码、写代码、执行命令、提交代码等。
 
 ## 效果预览
 
 ```
 你：帮我看一下 src/index.js 有没有 bug
 
-Bot：⏳ 正在处理：帮我看一下 src/index.js 有没有 bug...
+Bot：⏳ [Claude Code] 正在处理：帮我看一下 src/index.js 有没有 bug...
+Bot：🔧 读取文件: src/index.js
 Bot：我检查了 src/index.js，发现第 23 行有一个潜在问题...
 Bot：✅ 任务完成
 
 你：帮我修复它
 
-Bot：⏳ 正在处理：帮我修复它...（记得上文）
+Bot：⏳ [Claude Code] 正在处理：帮我修复它...（记得上文）
 Bot：已修复，改动如下...
 Bot：✅ 任务完成
 
+你：/ai   ← 切换到 Gemini
+
 你：帮我 git commit
 
-Bot：⏳ 正在处理：帮我 git commit...
+Bot：⏳ [Gemini CLI] 正在处理：帮我 git commit...
 Bot：已提交 commit: fix: resolve null reference in index.js
 Bot：✅ 任务完成
 ```
@@ -27,7 +30,11 @@ Bot：✅ 任务完成
 ## 前置要求
 
 - Node.js 18+
-- 已安装 Claude Code：`npm install -g @anthropic-ai/claude-code`
+- 至少安装一种 AI CLI：
+  - Claude Code：`npm install -g @anthropic-ai/claude-code`
+  - Gemini CLI：`npm install -g @google/gemini-cli`
+  - Qwen Code：`npm install -g @qwen-code/qwen-code`
+  - Codex CLI：`npm install -g @openai/codex`
 - Telegram 账号
 - 本机需保持开机并运行此服务
 
@@ -61,23 +68,21 @@ TELEGRAM_BOT_TOKEN=123456789:ABCdefGHI...
 # 白名单用户 ID，多个用逗号分隔（必填，只有在白名单的用户才能使用你的 bot）
 ALLOWED_USER_IDS=123456789
 
+# 默认 AI 后端（可选：claude / gemini / qwen / codex，默认 claude）
+DEFAULT_AI_BACKEND=claude
+
 # Claude Code 默认工作目录
 WORK_DIR=/Users/your_username/your_project
 
 # 预设项目列表，发送 /projects 可点按钮快速切换
 PROJECTS=[{"name":"项目A","path":"/Users/your_username/project-a"},{"name":"项目B","path":"/Users/your_username/project-b"}]
 
-# 国内访问 Telegram 必填，填本地代理地址,一般都是默认 7890，比如 clash
+# 国内访问 Telegram 必填，填本地代理地址，一般都是默认 7890，比如 clash
 HTTPS_PROXY=http://127.0.0.1:7890
 
-# 三方 API（不使用官方 Anthropic 账号时填写）
+# 三方 API（使用 Claude 且不使用官方 Anthropic 账号时填写）
 ANTHROPIC_AUTH_TOKEN=your_token
 ANTHROPIC_BASE_URL=https://your-api-endpoint.com/api
-
-# 权限模式：notify（默认）或 confirm
-# notify: Claude 执行操作后发通知，不阻塞
-# confirm: 每次操作前发 Telegram 消息让你确认-待完善
-PERMISSION_MODE=notify
 
 # ngrok token，使用 /tunnel 命令必填（免费注册 ngrok.com 获取）
 NGROK_AUTHTOKEN=your_ngrok_token
@@ -93,6 +98,29 @@ npm run pm2:status        # 确认运行状态，显示 online 即成功
 
 ## 功能说明
 
+### 多 AI 后端切换
+
+支持 Claude Code、Gemini CLI、Qwen Code、Codex CLI 四种后端，在 Telegram 中随时切换：
+
+```
+你：/ai
+
+Bot：当前 AI 后端：Claude Code
+
+     请选择要切换的 AI：
+     [✅ 🤖 Claude Code]
+     [✨ Gemini CLI]
+     [🌟 Qwen Code]
+     [⚡ Codex CLI]
+
+你：点击 Gemini CLI
+
+Bot：✅ 已切换到 ✨ Gemini CLI
+     对话历史已自动清除
+```
+
+每个对话独立选择后端，切换时自动清除上下文历史。默认后端在 `.env` 中通过 `DEFAULT_AI_BACKEND` 配置。
+
 ### 多轮对话
 
 Bot 会记住上下文，可以连续对话：
@@ -105,7 +133,7 @@ Bot：这个项目使用了...
 Bot：（记得上文）检查了依赖，发现...
 ```
 
-发送 `/clear` 清除历史，开始新对话。切换项目时也会自动清除历史。
+发送 `/clear` 清除历史，开始新对话。切换项目或切换 AI 后端时也会自动清除历史。
 
 ### 任务队列
 
@@ -126,7 +154,7 @@ Bot：⏳ 正在处理：任务B...
 
 ### 工具执行通知
 
-Claude 执行操作时，Bot 会实时通知你正在做什么：
+AI 执行操作时，Bot 会实时通知你正在做什么：
 
 ```
 Bot：⏳ 正在处理：帮我修复 bug...
@@ -135,19 +163,6 @@ Bot：🔧 编辑文件: src/index.js
 Bot：🔧 执行命令: npm run test
 Bot：修复完成，已通过测试...
 Bot：✅ 任务完成
-```
-
-### 权限确认模式（confirm）
-
-在 `.env` 中设置 `PERMISSION_MODE=confirm` 可开启权限确认模式。
-每次 Claude 准备执行写文件、运行命令等操作时，Bot 会先发消息让你确认：
-
-```
-Bot：⚠️ Claude 请求执行操作：
-     执行命令: rm -rf dist/
-
-     是否允许？
-     [✅ 允许]  [❌ 拒绝]
 ```
 
 ### 切换项目
@@ -182,11 +197,12 @@ Bot：✅ 已切换工作目录：/Users/your_username/some-other-project
 | 命令 | 说明 |
 |------|------|
 | `/help` | 显示所有命令帮助 |
+| `/ai` | 切换 AI 后端（Claude / Gemini / Qwen / Codex） |
 | `/projects` | 列出预设项目，点按钮切换工作目录 |
 | `/cd <路径>` | 切换到任意自定义工作目录 |
 | `/clear` | 清除对话历史，开始新对话 |
 | `/stop` | 中止当前任务并清空队列 |
-| `/status` | 查看当前状态（是否执行中、队列情况、是否有对话历史） |
+| `/status` | 查看当前状态（AI 后端、工作目录、是否执行中、对话历史） |
 
 ### 验证命令
 
@@ -269,4 +285,4 @@ npm run dev     # 开发模式，文件改动自动重启
 - `ALLOWED_USER_IDS` 一定要填，否则任何人都能控制你的电脑
 - 国内使用需配置 `HTTPS_PROXY`，否则连不上 Telegram
 - 服务运行期间本机需保持开机和网络连接
-- 默认 `PERMISSION_MODE=notify` 模式下 Claude 拥有完整权限，如需审批每个操作请改为 `confirm`
+- AI 拥有完整文件读写和命令执行权限，请确保只授权给自己信任的用户

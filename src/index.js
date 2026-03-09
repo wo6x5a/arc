@@ -4,10 +4,9 @@ import { promisify } from 'util'
 import TelegramBot from 'node-telegram-bot-api'
 import { HttpsProxyAgent } from 'https-proxy-agent'
 import { SessionManager } from './session.js'
-import { ClaudeRunner } from './claude-runner.js'
+import { getRunner, RUNNERS } from './runners/index.js'
 import { takeScreenshot } from './screenshot-helper.js'
 import { startTunnel, stopTunnel, getTunnelUrl } from './tunnel-helper.js'
-import { createHookServer } from './hook-server.js'
 
 const execAsync = promisify(exec)
 
@@ -52,47 +51,32 @@ process.on('unhandledRejection', (reason) => {
   console.error('[未处理的 Promise rejection]', reason)
 })
 
-const sessionManager = new SessionManager()
-const claudeRunner = new ClaudeRunner(defaultWorkDir)
+// 默认 AI 后端（通过 .env DEFAULT_AI_BACKEND 配置，支持：claude / gemini / qwen）
+const defaultBackend = process.env.DEFAULT_AI_BACKEND || 'claude'
 
-// 每个 chatId 对应的 claude session_id，用于多轮对话 resume
+const sessionManager = new SessionManager()
+
+// 每个 chatId 对应的 AI 后端名称
+const chatBackendMap = new Map() // chatId -> 'claude'|'gemini'|'qwen'
+
+// 全局工作目录（所有 chat 共享，切换项目或 /cd 时更新）
+let currentWorkDir = defaultWorkDir
+
+// 获取当前 chat 使用的后端名称
+function getBackendName(chatId) {
+  return chatBackendMap.get(chatId) || defaultBackend
+}
+
+// 获取当前 chat 的 runner 实例（按需创建）
+function getRunnerForChat(chatId) {
+  return getRunner(getBackendName(chatId), currentWorkDir)
+}
+
+// 每个 chatId 对应的 AI session_id，用于多轮对话 resume
 const claudeSessionMap = new Map()
 
 // 待输入自定义目录的 chatId 集合（等待用户回复路径）
 const pendingCustomDir = new Map() // chatId -> promptMessageId
-
-const pendingPermissions = new Map()
-
-// 当前正在执行任务的 chatId（用于 hook 服务器路由权限请求）
-let activeChatId = null
-
-// 启动 hook 服务器
-createHookServer(async ({ label }) => {
-  if (!activeChatId) return true // 没有活跃任务，默认允许
-
-  const chatId = activeChatId
-  return new Promise(async (resolvePermission) => {
-    const key = `perm_${chatId}_${Date.now()}`
-    pendingPermissions.set(key, { resolve: resolvePermission })
-    try {
-      await bot.sendMessage(chatId,
-        `⚠️ Claude 请求执行操作：\n\n${label}\n\n是否允许？`,
-        {
-          reply_markup: {
-            inline_keyboard: [[
-              { text: '✅ 允许', callback_data: `perm_allow_${key}` },
-              { text: '❌ 拒绝', callback_data: `perm_deny_${key}` },
-            ]]
-          }
-        }
-      )
-    } catch (err) {
-      console.error('发送权限确认消息失败:', err.message)
-      pendingPermissions.delete(key)
-      resolvePermission(true)
-    }
-  })
-})
 
 // 鉴权中间件
 function isAuthorized(userId) {
@@ -122,11 +106,15 @@ bot.onText(/\/start/, async (msg) => {
   if (!isAuthorized(userId)) {
     return bot.sendMessage(chatId, '无权限访问。')
   }
+  const backendName = getBackendName(chatId)
+  const backendLabel = RUNNERS[backendName]?.label || backendName
   await bot.sendMessage(chatId,
-    `Claude Code Bridge 已启动\n\n` +
-    `工作目录: ${claudeRunner.workDir}\n\n` +
-    `直接发送消息即可让 Claude Code 执行任务。\n\n` +
+    `ARC (AI Remote Coding) 已启动\n\n` +
+    `当前 AI：${backendLabel}\n` +
+    `工作目录：${currentWorkDir}\n\n` +
+    `直接发送消息即可让 AI 执行任务。\n\n` +
     `命令：\n` +
+    `/ai - 切换 AI 后端（Claude/Gemini/Qwen）\n` +
     `/projects - 切换工作项目\n` +
     `/cd <路径> - 切换到自定义工作目录\n` +
     `/clear - 清除对话历史，开始新对话\n` +
@@ -145,8 +133,12 @@ bot.onText(/\/help/, async (msg) => {
   const userId = msg.from.id
   if (!isAuthorized(userId)) return
 
+  const backendName = getBackendName(chatId)
+  const backendLabel = RUNNERS[backendName]?.label || backendName
   await bot.sendMessage(chatId,
     `命令列表：\n\n` +
+    `AI 后端：\n` +
+    `/ai - 切换 AI 后端，当前：${backendLabel}\n\n` +
     `基础命令：\n` +
     `/projects - 列出预设项目，点按钮切换工作目录\n` +
     `/cd <路径> - 切换到自定义工作目录\n` +
@@ -162,7 +154,7 @@ bot.onText(/\/help/, async (msg) => {
     `/tunnel <端口> - 开启 ngrok 内网穿透\n` +
     `  例: /tunnel 3000\n` +
     `  关闭: /tunnel stop\n\n` +
-    `当前工作目录: ${claudeRunner.workDir}`
+    `当前工作目录: ${currentWorkDir}`
   )
 })
 
@@ -203,15 +195,35 @@ bot.onText(/\/status/, async (msg) => {
   const running = sessionManager.currentTask(chatId)
   const pending = sessionManager.pendingCount(chatId)
   const hasHistory = claudeSessionMap.has(chatId)
+  const backendName = getBackendName(chatId)
+  const backendLabel = RUNNERS[backendName]?.label || backendName
 
   if (running) {
     const queueInfo = pending > 0 ? `\n队列中还有 ${pending} 个任务待执行` : ''
     await bot.sendMessage(chatId, `当前状态：执行中\n任务：${running}${queueInfo}`)
   } else {
     await bot.sendMessage(chatId,
-      `当前状态：空闲\n工作目录：${claudeRunner.workDir}\n对话历史：${hasHistory ? '有（发送 /clear 可清除）' : '无'}`
+      `当前状态：空闲\n当前 AI：${backendLabel}\n工作目录：${currentWorkDir}\n对话历史：${hasHistory ? '有（发送 /clear 可清除）' : '无'}`
     )
   }
+})
+
+// 处理 /ai 命令 - 切换 AI 后端
+bot.onText(/\/ai/, async (msg) => {
+  const chatId = msg.chat.id
+  const userId = msg.from.id
+  if (!isAuthorized(userId)) return
+
+  const currentBackend = getBackendName(chatId)
+  const inline_keyboard = Object.entries(RUNNERS).map(([key, { label, emoji }]) => {
+    const isCurrent = key === currentBackend
+    return [{ text: isCurrent ? `✅ ${emoji} ${label}` : `${emoji} ${label}`, callback_data: `switch_ai_${key}` }]
+  })
+
+  await bot.sendMessage(chatId,
+    `当前 AI 后端：${RUNNERS[currentBackend]?.label || currentBackend}\n\n请选择要切换的 AI：`,
+    { reply_markup: { inline_keyboard } }
+  )
 })
 
 // 处理 /projects 命令
@@ -225,13 +237,13 @@ bot.onText(/\/projects/, async (msg) => {
   }
 
   const inline_keyboard = projects.map((proj, index) => {
-    const isCurrent = proj.path === claudeRunner.workDir
+    const isCurrent = proj.path === currentWorkDir
     return [{ text: isCurrent ? `✅ ${proj.name}` : proj.name, callback_data: `switch_project_${index}` }]
   })
   inline_keyboard.push([{ text: '📁 自定义目录...', callback_data: 'switch_project_custom' }])
 
   await bot.sendMessage(chatId,
-    `当前工作目录：${claudeRunner.workDir}\n\n请选择要切换的项目：`,
+    `当前工作目录：${currentWorkDir}\n\n请选择要切换的项目：`,
     { reply_markup: { inline_keyboard } }
   )
 })
@@ -244,13 +256,13 @@ bot.onText(/\/cd(?:\s+(.+))?/, async (msg, match) => {
 
   const targetPath = match[1] ? match[1].trim() : null
   if (!targetPath) {
-    return bot.sendMessage(chatId, `当前工作目录：${claudeRunner.workDir}\n\n用法: /cd <路径>\n例: /cd /Users/me/myproject`)
+    return bot.sendMessage(chatId, `当前工作目录：${currentWorkDir}\n\n用法: /cd <路径>\n例: /cd /Users/me/myproject`)
   }
 
   try {
     const { stdout } = await execAsync(`cd '${targetPath.replace(/'/g, `'\\''`)}' && pwd`)
     const resolvedPath = stdout.trim()
-    claudeRunner.setWorkDir(resolvedPath)
+    currentWorkDir = resolvedPath
     claudeSessionMap.delete(chatId)
     await bot.sendMessage(chatId, `✅ 已切换工作目录：${resolvedPath}\n对话历史已自动清除`)
   } catch {
@@ -266,7 +278,7 @@ bot.onText(/\/test(?:\s+(.+))?/, async (msg, match) => {
 
   const customCmd = match[1] ? match[1].trim() : null
   // 自动探测合适的命令
-  const cmd = customCmd || await autoDetectBuildCmd(claudeRunner.workDir)
+  const cmd = customCmd || await autoDetectBuildCmd(currentWorkDir)
 
   if (!cmd) {
     return bot.sendMessage(chatId, '未检测到可用的构建/测试命令。\n用法: /test <命令>\n例: /test npm run build')
@@ -275,7 +287,7 @@ bot.onText(/\/test(?:\s+(.+))?/, async (msg, match) => {
   const statusMsg = await bot.sendMessage(chatId, `⏳ 执行：${cmd}`)
   try {
     const { stdout, stderr } = await execAsync(cmd, {
-      cwd: claudeRunner.workDir,
+      cwd: currentWorkDir,
       timeout: 120000,
       env: process.env
     })
@@ -311,7 +323,6 @@ bot.onText(/\/screenshot(?:\s+(.+))?/, async (msg, match) => {
     }
   }
 
-  // 把 localhost 自动转换为实际能访问的地址
   const statusMsg = await bot.sendMessage(chatId, `⏳ 正在截图：${url}`)
   try {
     const imgBuf = await takeScreenshot(url, { timeout: 20000 })
@@ -379,7 +390,7 @@ async function autoDetectBuildCmd(cwd) {
   return null
 }
 
-// 处理内联按钮回调（项目切换）
+// 处理内联按钮回调
 bot.on('callback_query', async (callbackQuery) => {
   const chatId = callbackQuery.message.chat.id
   const userId = callbackQuery.from.id
@@ -387,6 +398,36 @@ bot.on('callback_query', async (callbackQuery) => {
 
   const data = callbackQuery.data
   await bot.answerCallbackQuery(callbackQuery.id)
+
+  // 切换 AI 后端
+  if (data.startsWith('switch_ai_')) {
+    const newBackend = data.replace('switch_ai_', '')
+    if (!RUNNERS[newBackend]) return
+
+    const oldBackend = getBackendName(chatId)
+    if (newBackend === oldBackend) {
+      return bot.sendMessage(chatId, `当前已经是 ${RUNNERS[newBackend].label}，无需切换。`)
+    }
+
+    chatBackendMap.set(chatId, newBackend)
+    claudeSessionMap.delete(chatId) // 清除对话历史
+
+    const { label, emoji } = RUNNERS[newBackend]
+    const inline_keyboard = Object.entries(RUNNERS).map(([key, r]) => {
+      const isCurrent = key === newBackend
+      return [{ text: isCurrent ? `✅ ${r.emoji} ${r.label}` : `${r.emoji} ${r.label}`, callback_data: `switch_ai_${key}` }]
+    })
+
+    await bot.editMessageText(
+      `✅ 已切换到 ${emoji} ${label}\n对话历史已自动清除`,
+      {
+        chat_id: chatId,
+        message_id: callbackQuery.message.message_id,
+        reply_markup: { inline_keyboard }
+      }
+    )
+    return
+  }
 
   if (data === 'switch_project_custom') {
     const promptMsg = await bot.sendMessage(chatId, '请输入要切换的目录路径：', {
@@ -401,7 +442,7 @@ bot.on('callback_query', async (callbackQuery) => {
     const project = projects[index]
     if (!project) return
 
-    claudeRunner.setWorkDir(project.path)
+    currentWorkDir = project.path
     claudeSessionMap.delete(chatId)
 
     const inline_keyboard = projects.map((proj, i) => {
@@ -417,20 +458,7 @@ bot.on('callback_query', async (callbackQuery) => {
         reply_markup: { inline_keyboard }
       }
     )
-  }
-
-  if (data.startsWith('perm_allow_') || data.startsWith('perm_deny_')) {
-    const allowed = data.startsWith('perm_allow_')
-    const key = data.replace(/^perm_(allow|deny)_/, '')
-    const pending = pendingPermissions.get(key)
-    if (pending) {
-      pendingPermissions.delete(key)
-      await bot.editMessageText(
-        `${allowed ? '✅ 已允许' : '❌ 已拒绝'}`,
-        { chat_id: chatId, message_id: callbackQuery.message.message_id }
-      )
-      pending.resolve(allowed)
-    }
+    return
   }
 })
 
@@ -458,7 +486,7 @@ bot.on('message', async (msg) => {
       try {
         const { stdout } = await execAsync(`cd '${targetPath.replace(/'/g, `'\\''`)}' && pwd`)
         const resolvedPath = stdout.trim()
-        claudeRunner.setWorkDir(resolvedPath)
+        currentWorkDir = resolvedPath
         claudeSessionMap.delete(chatId)
         await bot.sendMessage(chatId, `✅ 已切换工作目录：${resolvedPath}\n对话历史已自动清除`)
       } catch {
@@ -480,16 +508,17 @@ bot.on('message', async (msg) => {
   }
 
   sessionManager.enqueue(chatId, userMessage, async (session) => {
-    activeChatId = chatId
+    const runner = getRunnerForChat(chatId)
     const resumeSessionId = claudeSessionMap.get(chatId)
-    const statusMsg = await bot.sendMessage(chatId, `⏳ 正在处理：${userMessage.slice(0, 100)}...`)
+    const backendLabel = RUNNERS[getBackendName(chatId)]?.label || getBackendName(chatId)
+    const statusMsg = await bot.sendMessage(chatId, `⏳ [${backendLabel}] 正在处理：${userMessage.slice(0, 100)}...`)
 
     let dots = 0
     const heartbeat = setInterval(async () => {
       dots = (dots + 1) % 4
       const dotStr = '.'.repeat(dots + 1)
       try {
-        await bot.editMessageText(`⏳ 正在处理：${userMessage.slice(0, 80)}${dotStr}`, {
+        await bot.editMessageText(`⏳ [${backendLabel}] 正在处理：${userMessage.slice(0, 80)}${dotStr}`, {
           chat_id: chatId,
           message_id: statusMsg.message_id
         })
@@ -497,7 +526,7 @@ bot.on('message', async (msg) => {
     }, 8000)
 
     try {
-      const newClaudeSessionId = await claudeRunner.run({
+      const newSessionId = await runner.run({
         prompt: userMessage,
         session,
         resumeSessionId,
@@ -509,19 +538,14 @@ bot.on('message', async (msg) => {
           }
         },
         onToolUse: async (label) => {
-          // notify 模式：实时发通知但不阻塞
-          // confirm 模式：由 hook-server 处理，这里不需要做什么
-          if ((process.env.PERMISSION_MODE || 'notify') === 'notify') {
-            bot.sendMessage(chatId, `🔧 ${label}`).catch(() => {})
-          }
+          bot.sendMessage(chatId, `🔧 ${label}`).catch(() => {})
         },
       })
 
-      if (newClaudeSessionId) {
-        claudeSessionMap.set(chatId, newClaudeSessionId)
+      if (newSessionId) {
+        claudeSessionMap.set(chatId, newSessionId)
       }
 
-      activeChatId = null
       clearInterval(heartbeat)
       const remaining = sessionManager.pendingCount(chatId)
       const doneText = remaining > 0
@@ -533,8 +557,6 @@ bot.on('message', async (msg) => {
       })
     } catch (err) {
       clearInterval(heartbeat)
-      // 任务失败时清除 session，防止后续消息复用坏 session
-      activeChatId = null
       claudeSessionMap.delete(chatId)
       if (err.message === 'ABORTED') {
         await bot.editMessageText('⛔ 任务已中止', {
@@ -553,6 +575,7 @@ bot.on('message', async (msg) => {
 })
 
 console.log(`ARC (AI Remote Coding) 启动成功`)
-console.log(`工作目录: ${claudeRunner.workDir}`)
+console.log(`默认 AI 后端: ${RUNNERS[defaultBackend]?.label || defaultBackend}`)
+console.log(`工作目录: ${currentWorkDir}`)
 console.log(`允许的用户 ID: ${allowedUserIds.join(', ') || '所有人'}`)
 console.log(`预设项目数量: ${projects.length}`)

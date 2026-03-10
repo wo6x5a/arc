@@ -1,4 +1,3 @@
-import * as Lark from '@larksuiteoapi/node-sdk'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import {
@@ -17,12 +16,8 @@ const FEISHU_APP_ID = process.env.FEISHU_APP_ID
 const FEISHU_APP_SECRET = process.env.FEISHU_APP_SECRET
 const feishuAllowedUserIds = (process.env.FEISHU_ALLOWED_USER_IDS || '').split(',').map(s => s.trim()).filter(Boolean)
 
-// SDK 客户端（用于发送消息）
-const client = new Lark.Client({
-  appId: FEISHU_APP_ID,
-  appSecret: FEISHU_APP_SECRET,
-  domain: Lark.Domain.Feishu,
-})
+// SDK 客户端（startFeishuBot 调用后赋值）
+let client
 
 // ─── 鉴权 ────────────────────────────────────────────────
 function isAuthorized(openId) {
@@ -344,7 +339,16 @@ async function handleTask(chatId, userMessage) {
 }
 
 // ─── WSClient 启动 ────────────────────────────────────────
-export function startFeishuBot() {
+export async function startFeishuBot() {
+  const Lark = await import('@larksuiteoapi/node-sdk')
+
+  // SDK 客户端（用于发送消息）
+  client = new Lark.Client({
+    appId: FEISHU_APP_ID,
+    appSecret: FEISHU_APP_SECRET,
+    domain: Lark.Domain.Feishu,
+  })
+
   const wsClient = new Lark.WSClient({
     appId: FEISHU_APP_ID,
     appSecret: FEISHU_APP_SECRET,

@@ -1,4 +1,5 @@
 .env
+.arc.pid
 node_modules/
 *.log
 CLAUDE.md

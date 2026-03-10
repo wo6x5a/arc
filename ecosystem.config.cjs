@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: 'arc',
-      script: 'src/index.js',
+      script: 'src/main.js',
       interpreter: 'node',
       // 崩溃后自动重启，最多连续失败 10 次
       max_restarts: 10,

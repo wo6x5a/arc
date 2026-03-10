@@ -3,10 +3,10 @@
   "version": "1.0.0",
   "description": "ARC (AI Remote Coding) - Control AI coding agents via messaging apps",
   "type": "module",
-  "main": "src/index.js",
+  "main": "src/main.js",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
+    "start": "node src/main.js",
+    "dev": "node --watch src/main.js",
     "pm2:start": "pm2 start ecosystem.config.cjs",
     "pm2:stop": "pm2 stop arc",
     "pm2:restart": "pm2 restart arc",
@@ -14,7 +14,9 @@
     "pm2:status": "pm2 status"
   },
   "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.59.0",
     "@ngrok/ngrok": "^1.7.0",
+    "dingtalk-stream-sdk-nodejs": "^2.0.4",
     "dotenv": "^16.4.5",
     "https-proxy-agent": "^7.0.6",
     "node-pty": "^1.1.0",

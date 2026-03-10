@@ -117,6 +117,11 @@ async function sendProjectMenu(chatId, sessionWebhook) {
 
 // ─── 命令处理 ─────────────────────────────────────────────
 async function handleCommand(chatId, _senderId, sessionWebhook, text) {
+  if (text === '/whoami') {
+    await sendText(sessionWebhook, `你的 staffId 是：\n${_senderId}\n\n将此 ID 添加到 .env 的 DINGTALK_ALLOWED_USER_IDS 即可加入白名单。`)
+    return
+  }
+
   if (/^\/start$|^\/help$/.test(text)) {
     const backendLabel = RUNNERS[getBackendName(chatId)]?.label || getBackendName(chatId)
     await sendText(sessionWebhook,

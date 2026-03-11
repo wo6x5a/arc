@@ -1,9 +1,11 @@
 {
-  "name": "arc",
+  "name": "arc-bot",
   "version": "1.0.0",
   "description": "ARC (AI Remote Coding) - Control AI coding agents via messaging apps",
   "type": "module",
   "main": "src/main.js",
+  "bin": { "arc-bot": "./bin/arc-bot.js" },
+  "engines": { "node": ">=18" },
   "scripts": {
     "start": "node src/main.js",
     "dev": "node --watch src/main.js",
@@ -16,11 +18,13 @@
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.59.0",
     "@ngrok/ngrok": "^1.7.0",
+    "@whiskeysockets/baileys": "^6.7.18",
     "dingtalk-stream-sdk-nodejs": "^2.0.4",
     "dotenv": "^16.4.5",
     "https-proxy-agent": "^7.0.6",
-    "node-pty": "^1.1.0",
     "node-telegram-bot-api": "^0.66.0",
-    "playwright": "^1.58.2"
+    "playwright": "^1.58.2",
+    "inquirer": "^9.3.7",
+    "pm2": "^5.4.3"
   }
 }

@@ -1,6 +1,13 @@
+import { existsSync } from 'fs'
+import { execSync } from 'child_process'
 import { BaseRunner } from './base-runner.js'
 
 const QWEN_BIN = process.env.QWEN_BIN || 'qwen'
+
+function _binExists(bin) {
+  if (bin.startsWith('/') || bin.startsWith('./')) return existsSync(bin)
+  try { execSync(`which ${bin}`, { stdio: 'ignore' }); return true } catch { return false }
+}
 
 /**
  * Qwen Code Runner
@@ -14,6 +21,8 @@ const QWEN_BIN = process.env.QWEN_BIN || 'qwen'
  * - 不需要 CLAUDECODE='' 环境变量
  */
 export class QwenRunner extends BaseRunner {
+  static isAvailable() { return _binExists(QWEN_BIN) }
+
   get displayName() { return 'Qwen Code' }
 
   get binPath() { return QWEN_BIN }

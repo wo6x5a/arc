@@ -8,9 +8,9 @@ import {
   chatBackendMap, claudeSessionMap, pendingCustomDir,
   projects, defaultBackend, allowedUserIds,
 } from './state.js'
-import { getRunner, RUNNERS } from './runners/index.js'
+import { getRunner, RUNNERS, getAvailableRunners } from './runners/index.js'
 import { takeScreenshot } from './screenshot-helper.js'
-import { startTunnel, stopTunnel, getTunnelUrl } from './tunnel-helper.js'
+import { startTunnel, stopTunnel, getTunnelUrl, detectProjectPort } from './tunnel-helper.js'
 
 const execAsync = promisify(exec)
 
@@ -194,7 +194,7 @@ export function startTelegramBot() {
     if (!isAuthorized(userId)) return
 
     const currentBackend = getBackendName(chatId)
-    const inline_keyboard = Object.entries(RUNNERS).map(([key, { label, emoji }]) => {
+    const inline_keyboard = getAvailableRunners().map(([key, { label, emoji }]) => {
       const isCurrent = key === currentBackend
       return [{ text: isCurrent ? `✅ ${emoji} ${label}` : `${emoji} ${label}`, callback_data: `switch_ai_${key}` }]
     })
@@ -330,13 +330,17 @@ export function startTelegramBot() {
       return bot.sendMessage(chatId, '隧道已关闭。')
     }
 
-    const port = parseInt(arg)
+    let port = parseInt(arg)
     if (!port || isNaN(port)) {
       const currentUrl = getTunnelUrl()
       if (currentUrl) {
         return bot.sendMessage(chatId, `当前隧道地址：${currentUrl}\n\n发送 /tunnel stop 可关闭。`)
       }
-      return bot.sendMessage(chatId, '请提供端口号。\n用法: /tunnel <端口>\n例: /tunnel 3000\n\n关闭: /tunnel stop')
+      // 自动检测端口
+      port = detectProjectPort(currentWorkDir)
+      if (!port) {
+        return bot.sendMessage(chatId, '请提供端口号。\n用法: /tunnel <端口>\n例: /tunnel 3000\n\n关闭: /tunnel stop')
+      }
     }
 
     const statusMsg = await bot.sendMessage(chatId, `⏳ 正在开启端口 ${port} 的隧道...`)
@@ -377,7 +381,7 @@ export function startTelegramBot() {
       claudeSessionMap.delete(chatId)
 
       const { label, emoji } = RUNNERS[newBackend]
-      const inline_keyboard = Object.entries(RUNNERS).map(([key, r]) => {
+      const inline_keyboard = getAvailableRunners().map(([key, r]) => {
         const isCurrent = key === newBackend
         return [{ text: isCurrent ? `✅ ${r.emoji} ${r.label}` : `${r.emoji} ${r.label}`, callback_data: `switch_ai_${key}` }]
       })

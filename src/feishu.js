@@ -6,9 +6,9 @@ import {
   chatBackendMap, claudeSessionMap,
   projects, defaultBackend,
 } from './state.js'
-import { getRunner, RUNNERS } from './runners/index.js'
+import { getRunner, RUNNERS, getAvailableRunners } from './runners/index.js'
 import { takeScreenshot } from './screenshot-helper.js'
-import { startTunnel, stopTunnel, getTunnelUrl } from './tunnel-helper.js'
+import { startTunnel, stopTunnel, getTunnelUrl, detectProjectPort } from './tunnel-helper.js'
 
 const execAsync = promisify(exec)
 
@@ -69,7 +69,7 @@ const MENU_TIMEOUT_MS = 60_000
 function buildAiMenuText(chatId) {
   const currentBackend = getBackendName(chatId)
   const currentLabel = RUNNERS[currentBackend]?.label || currentBackend
-  const lines = Object.entries(RUNNERS).map(([key, { label, emoji }], i) => {
+  const lines = getAvailableRunners().map(([key, { label, emoji }], i) => {
     const isCurrent = key === currentBackend
     return `${i + 1}. ${isCurrent ? '✅ ' : ''}${emoji} ${label}`
   })
@@ -227,15 +227,18 @@ async function handleCommand(chatId, openId, text) {
       await sendText(chatId, '隧道已关闭。')
       return
     }
-    const port = parseInt(arg)
+    let port = parseInt(arg)
     if (!port || isNaN(port)) {
       const currentUrl = getTunnelUrl()
       if (currentUrl) {
         await sendText(chatId, `当前隧道地址：${currentUrl}\n\n发送 /tunnel stop 可关闭。`)
-      } else {
-        await sendText(chatId, '请提供端口号。\n用法: /tunnel <端口>\n例: /tunnel 3000\n\n关闭: /tunnel stop')
+        return
       }
-      return
+      port = detectProjectPort(currentWorkDir)
+      if (!port) {
+        await sendText(chatId, '请提供端口号。\n用法: /tunnel <端口>\n例: /tunnel 3000\n\n关闭: /tunnel stop')
+        return
+      }
     }
     await sendText(chatId, `⏳ 正在开启端口 ${port} 的隧道...`)
     try {
@@ -260,7 +263,7 @@ async function handleMenuReply(chatId, num) {
   pendingMenuMap.delete(chatId)
 
   if (pending.type === 'ai') {
-    const entries = Object.entries(RUNNERS)
+    const entries = getAvailableRunners()
     const selected = entries[num - 1]
     if (!selected) {
       await sendText(chatId, `序号无效，请回复 1~${entries.length} 之间的数字。`)

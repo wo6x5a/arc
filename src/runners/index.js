@@ -27,4 +27,12 @@ export function getRunner(name, workDir) {
   return new entry.Runner(workDir)
 }
 
+/**
+ * 返回已安装的后端（Runner.isAvailable() 为 true），保持原始顺序
+ * @returns {Array<[string, {Runner, label, emoji}]>}
+ */
+export function getAvailableRunners() {
+  return Object.entries(RUNNERS).filter(([, { Runner }]) => Runner.isAvailable())
+}
+
 export { ClaudeRunner, GeminiRunner, QwenRunner, CodexRunner }

@@ -1,8 +1,10 @@
 .env
 .arc.pid
+.whatsapp-auth/
 node_modules/
 *.log
 CLAUDE.md
+AGENTS.md
 docs/
 
 # 系统文件
@@ -22,3 +24,4 @@ Desktop.ini
 *.swo
 *~
 .claude/
+CLAUDE.md

@@ -7,9 +7,9 @@ import {
   chatBackendMap, claudeSessionMap,
   projects, defaultBackend,
 } from './state.js'
-import { getRunner, RUNNERS } from './runners/index.js'
+import { getRunner, RUNNERS, getAvailableRunners } from './runners/index.js'
 import { takeScreenshot } from './screenshot-helper.js'
-import { startTunnel, stopTunnel, getTunnelUrl } from './tunnel-helper.js'
+import { startTunnel, stopTunnel, getTunnelUrl, detectProjectPort } from './tunnel-helper.js'
 
 // dingtalk-stream-sdk-nodejs 是 CJS 包，用 createRequire 兼容 ESM
 const require = createRequire(import.meta.url)
@@ -47,7 +47,9 @@ async function sendText(sessionWebhook, text) {
 
 // ─── 获取后端 ─────────────────────────────────────────────
 function getBackendName(chatId) {
-  return chatBackendMap.get(chatId) || defaultBackend
+  const backend = chatBackendMap.get(chatId)
+  if (!backend) console.log(`[钉钉] getBackendName fallback: chatId=${chatId} 不在 map 中，回退到 ${defaultBackend}`)
+  return backend || defaultBackend
 }
 
 // ─── 菜单等待状态 ─────────────────────────────────────────
@@ -99,7 +101,7 @@ async function handleMenuSelection(chatId, sessionWebhook, num) {
 async function sendAiMenu(chatId, sessionWebhook) {
   const currentBackend = getBackendName(chatId)
   const currentLabel = RUNNERS[currentBackend]?.label || currentBackend
-  const btns = Object.entries(RUNNERS).map(([key, { label, emoji }]) => ({
+  const btns = getAvailableRunners().map(([key, { label, emoji }]) => ({
     title: key === currentBackend ? `✅ ${emoji} ${label}（当前）` : `${emoji} ${label}`,
     cmd: `/ai ${key}`,
   }))
@@ -131,6 +133,7 @@ async function handleCommand(chatId, _senderId, sessionWebhook, text) {
       `直接发消息即可让 AI 执行任务。\n\n` +
       `命令：\n` +
       `/ai - 切换 AI 后端\n` +
+      `/ai [claude/qwen/gemini/codex]- 切换 AI 后端\n` +
       `/projects - 切换工作项目\n` +
       `/cd <路径> - 切换到自定义工作目录\n` +
       `/clear - 清除对话历史\n` +
@@ -152,12 +155,14 @@ async function handleCommand(chatId, _senderId, sessionWebhook, text) {
     if (arg && RUNNERS[arg]) {
       // 直接切换（来自卡片按钮点击）
       const oldBackend = getBackendName(chatId)
+      console.log(`[钉钉] /ai 切换: chatId=${chatId}, ${oldBackend} → ${arg}`)
       if (arg === oldBackend) {
         await sendText(sessionWebhook, `当前已经是 ${RUNNERS[arg].label}，无需切换。`)
       } else {
         chatBackendMap.set(chatId, arg)
         claudeSessionMap.delete(chatId)
         const { label, emoji } = RUNNERS[arg]
+        console.log(`[钉钉] 切换成功, chatBackendMap size=${chatBackendMap.size}, 当前=${chatBackendMap.get(chatId)}`)
         await sendText(sessionWebhook, `✅ 已切换到 ${emoji} ${label}\n对话历史已自动清除`)
       }
     } else {
@@ -173,11 +178,13 @@ async function handleCommand(chatId, _senderId, sessionWebhook, text) {
     }
     const arg = text.slice(9).trim()
     const projIndex = parseInt(arg)
+    console.log(`[钉钉] /projects: chatId=${chatId}, arg="${arg}", projIndex=${projIndex}`)
     if (!isNaN(projIndex) && projects[projIndex]) {
       // 直接切换（来自卡片按钮点击）
       const project = projects[projIndex]
       setCurrentWorkDir(project.path)
       claudeSessionMap.delete(chatId)
+      console.log(`[钉钉] 项目切换成功: ${project.path}`)
       await sendText(sessionWebhook, `✅ 已切换到：${project.name}\n工作目录：${project.path}\n对话历史已自动清除`)
     } else {
       await sendProjectMenu(chatId, sessionWebhook)
@@ -285,15 +292,18 @@ async function handleCommand(chatId, _senderId, sessionWebhook, text) {
       await sendText(sessionWebhook, '隧道已关闭。')
       return
     }
-    const port = parseInt(arg)
+    let port = parseInt(arg)
     if (!port || isNaN(port)) {
       const currentUrl = getTunnelUrl()
       if (currentUrl) {
         await sendText(sessionWebhook, `当前隧道地址：${currentUrl}\n\n发送 /tunnel stop 可关闭。`)
-      } else {
-        await sendText(sessionWebhook, '请提供端口号。\n用法: /tunnel <端口>\n例: /tunnel 3000\n\n关闭: /tunnel stop')
+        return
       }
-      return
+      port = detectProjectPort(currentWorkDir)
+      if (!port) {
+        await sendText(sessionWebhook, '请提供端口号。\n用法: /tunnel <端口>\n例: /tunnel 3000\n\n关闭: /tunnel stop')
+        return
+      }
     }
     await sendText(sessionWebhook, `⏳ 正在开启端口 ${port} 的隧道...`)
     try {
@@ -315,9 +325,11 @@ async function handleTask(chatId, sessionWebhook, userMessage) {
   }
 
   sessionManager.enqueue(chatId, userMessage, async (session) => {
-    const runner = getRunner(getBackendName(chatId), currentWorkDir)
+    const backendName = getBackendName(chatId)
+    console.log(`[钉钉] handleTask: chatId=${chatId}, backend=${backendName}, chatBackendMap.has=${chatBackendMap.has(chatId)}`)
+    const runner = getRunner(backendName, currentWorkDir)
     const resumeSessionId = claudeSessionMap.get(chatId)
-    const backendLabel = RUNNERS[getBackendName(chatId)]?.label || getBackendName(chatId)
+    const backendLabel = RUNNERS[backendName]?.label || backendName
 
     await sendText(sessionWebhook, `⏳ [${backendLabel}] 正在处理：${userMessage.slice(0, 100)}...`)
 

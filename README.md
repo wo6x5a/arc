@@ -1,6 +1,6 @@
 # ARC — AI Remote Coding
 
-通过 Telegram Bot、飞书 Bot 或钉钉 Bot 远程控制本机的 AI 编程助手（Claude Code、Gemini CLI、Qwen Code、Codex 等），在手机上发消息即可让 AI 帮你读代码、写代码、执行命令、提交代码等。
+通过 Telegram Bot、WhatsApp Bot、飞书 Bot 或钉钉 Bot 远程控制本机的 AI 编程助手（Claude Code、Gemini CLI、Qwen Code、Codex 等），在手机上发消息即可让 AI 帮你读代码、写代码、执行命令、提交代码等。
 
 ## 效果预览
 
@@ -35,18 +35,47 @@ Bot：✅ 任务完成
   - Gemini CLI：`npm install -g @google/gemini-cli`
   - Qwen Code：`npm install -g @qwen-code/qwen-code`
   - Codex CLI：`npm install -g @openai/codex`
-- Telegram 账号（或飞书企业应用，或钉钉企业内部应用）
+- Telegram 账号（或 WhatsApp 账号，或飞书企业应用，或钉钉企业内部应用）
 - 本机需保持开机并运行此服务
 
-## 安装步骤
+## 安装
 
-### 第一步：创建 Bot（三选一或多选）
+```bash
+npm install -g arc-bot
+```
+
+安装完成后，运行 `arc-bot start`，首次启动会自动进入交互式配置向导，引导你填写各平台的 Token 和白名单。配置完成后自动启动服务。
+
+```bash
+arc-bot start    # 启动（首次自动配置）
+arc-bot config   # 重新配置
+arc-bot stop     # 停止
+arc-bot restart  # 重启
+arc-bot logs     # 查看日志
+arc-bot status   # 查看状态
+```
+
+---
+
+## 手动安装（从源码）
+
+如需二次开发或自定义，可以克隆源码手动配置：
+
+### 第一步：创建 Bot（四选一或多选）
 
 #### Telegram(推荐)
 
 1. 在 Telegram 搜索 `@BotFather`，发送 `/newbot`，按提示创建
 2. 保存返回的 **Bot Token**（格式如 `123456789:ABCdefGHI...`）
 3. 在 Telegram 搜索 `@userinfobot`，发送任意消息，保存返回的 **Id** 数字（用于白名单）
+
+#### WhatsApp
+
+WhatsApp 使用 [Baileys](https://github.com/WhiskeySockets/Baileys) 库，无需创建应用，直接扫码登录：
+
+1. 首次启动时，终端会打印二维码，用 WhatsApp 手机端扫码（「已链接的设备」→「链接设备」）
+2. 登录凭证保存在 `.whatsapp-auth/` 目录，重启后无需重复扫码
+3. 白名单号码格式：含国际区号，去掉 `+`，如中国号码 `13800138000` 填写为 `8613800138000`
 
 #### 钉钉
 
@@ -75,6 +104,7 @@ Bot：✅ 任务完成
 ### 第二步：配置
 
 ```bash
+git clone https://github.com/your-username/arc.git
 cd arc
 npm install
 cp .env.example .env
@@ -83,6 +113,10 @@ cp .env.example .env
 编辑 `.env`，按需填写对应平台的配置（不使用的平台留空即可，对应 Bot 不会启动）：
 
 ```env
+# ── WhatsApp ───────────────────────────────────────────────
+WHATSAPP_ENABLED=true
+WHATSAPP_ALLOWED_NUMBERS=8613800138000  # 白名单手机号（国际区号+号码），逗号分隔，空则允许所有人
+
 # ── Telegram ──────────────────────────────────────────────
 TELEGRAM_BOT_TOKEN=123456789:ABCdefGHI...
 ALLOWED_USER_IDS=123456789          # 白名单用户 ID，逗号分隔
@@ -128,6 +162,7 @@ npm run pm2:status        # 确认运行状态，显示 online 即成功
 | 平台 | 连接方式 | 是否需要公网 IP |
 |------|----------|-----------------|
 | Telegram | 长轮询 | 否（需代理） |
+| WhatsApp | Baileys WebSocket | 否（需代理） |
 | 飞书 | WSClient 长连接 | 否 |
 | 钉钉 | Stream 模式 | 否 |
 
@@ -315,7 +350,7 @@ ARC 在设计上将安全性放在首位。**服务本身不对外暴露任何�
 
 ### 架构层面的安全保障
 
-- **无公网暴露**：飞书和钉钉均采用 Stream/WSClient 长连接模式，本机主动连接平台，无需开放任何端口，防火墙不需要做任何配置
+- **无公网暴露**：飞书和钉钉均采用 Stream/WSClient 长连接模式，WhatsApp 使用 Baileys WebSocket，本机主动连接平台，无需开放任何端口，防火墙不需要做任何配置
 - **端到端加密**：所有平台通过官方 SDK 建立 TLS 加密连接，消息不经过任何第三方中转
 - **白名单鉴权**：每条消息到达前都会验证发送者身份，未在白名单中的请求直接丢弃，不执行任何操作
 - **进程隔离**：AI CLI 以独立子进程运行，由 PM2 托管，崩溃不影响宿主系统
@@ -327,6 +362,7 @@ ARC 在设计上将安全性放在首位。**服务本身不对外暴露任何�
 | 平台 | 环境变量 | ID 获取方式 |
 |------|----------|-------------|
 | Telegram | `ALLOWED_USER_IDS` | 向 @userinfobot 发任意消息获取数字 ID |
+| WhatsApp | `WHATSAPP_ALLOWED_NUMBERS` | 手机号含国际区号，去掉 `+`，如 `8613800138000` |
 | 飞书 | `FEISHU_ALLOWED_USER_IDS` | openId，以 `ou_` 开头，可从飞书开放平台获取 |
 | 钉钉 | `DINGTALK_ALLOWED_USER_IDS` | 向 bot 发送 `/whoami` 获取 staffId |
 

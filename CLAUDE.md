@@ -44,7 +44,6 @@ PM2 配置文件：`ecosystem.config.cjs`（崩溃后等 3 秒重启，连续失
 | `DINGTALK_APP_KEY` | 钉钉企业内部应用 AppKey，钉钉 Bot 必填 |
 | `DINGTALK_APP_SECRET` | 钉钉企业内部应用 AppSecret，钉钉 Bot 必填 |
 | `DINGTALK_ALLOWED_USER_IDS` | 钉钉白名单 staffId，逗号分隔（空则允许所有人） |
-| `DINGTALK_WEBHOOK_PORT` | 钉钉 Webhook 监听端口，默认 `7703` |
 
 ## 架构
 
@@ -54,7 +53,7 @@ src/
 ├── state.js         # 共享状态层（sessionManager、currentWorkDir、各 Map）
 ├── index.js         # Telegram Bot 消息路由与命令处理
 ├── feishu.js        # 飞书 Bot（WSClient 长连接 + 命令 + 文字菜单）
-├── dingtalk.js      # 钉钉 Bot（HTTP Webhook + 命令 + 文本菜单）
+├── dingtalk.js      # 钉钉 Bot（Stream 长连接 + 命令 + 文本菜单）
 ├── session.js       # 每个 chat 的会话状态（isRunning、AbortController）
 ├── screenshot-helper.js # 截图工具
 ├── tunnel-helper.js # ngrok 内网穿透管理
@@ -93,13 +92,10 @@ src/
 
 ### 钉钉 Bot 说明
 
-- **Webhook 模式**：钉钉主动 POST 到本地 HTTP 服务（默认与飞书共用端口 7702），需要公网 URL
-- **获取公网 URL**：在任意 Bot 发 `/tunnel 7702`，将返回的 ngrok URL 填入钉钉开发者后台
-- **事件路由**：`POST /webhook/dingtalk`（消息事件）
-- **签名校验**：HMAC-SHA256(timestamp + "\n" + appSecret) 验证请求合法性
+- **Stream 模式**：使用 `dingtalk-stream-sdk-nodejs` 的 `DWClient`，钉钉主动推送事件到本地（WebSocket），无需公网 IP
+- **钉钉开发者后台配置**：创建企业内部应用，填入 AppKey/AppSecret 即可，无需配置 Webhook URL
 - **群聊 @**：钉钉群聊必须 @ 机器人，代码自动去除 @ 前缀
-- **菜单交互**：`/ai`、`/projects` 命令发送 Markdown 文本菜单，用户回复序号选择（降级方案，无需卡片 DSL）
-- **统一端口**：飞书和钉钉共用同一个 HTTP 实例，通过路由路径区分（`/webhook/event`、`/webhook/card`、`/webhook/dingtalk`）
+- **菜单交互**：`/ai`、`/projects` 命令发送文本序号菜单，用户回复数字选择
 
 ### 权限模式
 

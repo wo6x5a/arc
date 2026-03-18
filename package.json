@@ -29,10 +29,12 @@
     "https-proxy-agent": "^7.0.6",
     "inquirer": "^9.3.7",
     "node-telegram-bot-api": "^0.66.0",
-    "playwright": "^1.58.2",
     "pm2": "^5.4.3",
     "proxy-agent": "^6.5.0",
     "qrcode": "^1.5.4",
     "socks": "^2.8.7"
+  },
+  "optionalDependencies": {
+    "playwright": "^1.58.2"
   }
 }

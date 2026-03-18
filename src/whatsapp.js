@@ -4,9 +4,7 @@ import { existsSync, mkdirSync } from 'fs'
 import { resolve } from 'path'
 import { fileURLToPath } from 'url'
 import { HttpsProxyAgent } from 'https-proxy-agent'
-import { SocksClient } from 'socks'
 import QRCode from 'qrcode'
-import { ProxyAgent } from 'proxy-agent'
 import {
   sessionManager,
   currentWorkDir, setCurrentWorkDir,
@@ -30,7 +28,8 @@ let sock
 // ─── 鉴权 ────────────────────────────────────────────────
 function isAuthorized(jid) {
   if (whatsappAllowedUserIds.length === 0) return true
-  const number = jid.replace(/@.+$/, '')
+  // 去掉 @domain 和 :device 后缀（如 8613588818853:3@s.whatsapp.net → 8613588818853）
+  const number = jid.replace(/@.+$/, '').replace(/:\d+$/, '')
   return whatsappAllowedUserIds.some(n => n.replace(/\D/g, '') === number.replace(/\D/g, ''))
 }
 
@@ -39,8 +38,17 @@ async function sendText(jid, text) {
   const MAX = 4000
   const chunks = []
   for (let i = 0; i < text.length; i += MAX) chunks.push(text.slice(i, i + MAX))
+  // @lid 是 Bot 自身的 linked device ID，回复需发到用户的真实手机号 JID（去掉 :device 后缀）
+  const sendJid = jid.endsWith('@lid')
+    ? sock.user.id.replace(/:\d+@/, '@')
+    : jid
+  console.log('[WhatsApp] sendText', jid, '→', sendJid, '长度:', text.length)
   for (const chunk of chunks) {
-    await sock.sendMessage(jid, { text: chunk })
+    try {
+      await sock.sendMessage(sendJid, { text: chunk })
+    } catch (err) {
+      console.error('[WhatsApp] sendMessage 失败 jid:', sendJid, err.message)
+    }
   }
 }
 
@@ -361,19 +369,19 @@ export async function startWhatsappBot() {
   const { version } = await fetchLatestBaileysVersion()
 
   const logger = {
-    level: 'silent',
+    level: 'warn',
     child: () => logger,
     trace: () => {},
     debug: () => {},
     info: () => {},
-    warn: () => {},
-    error: () => {},
-    fatal: () => {},
+    warn: (...a) => console.log('[WhatsApp:warn]', ...a),
+    error: (...a) => console.log('[WhatsApp:error]', ...a),
+    fatal: (...a) => console.log('[WhatsApp:fatal]', ...a),
   }
 
-  // 使用 proxy-agent，支持 HTTP/HTTPS/SOCKS 代理
+  // 使用 HttpsProxyAgent，支持 HTTP CONNECT 隧道（WSS 兼容）
   const proxyUrl = process.env.WHATSAPP_SOCKS_PROXY || process.env.HTTPS_PROXY
-  const agent = proxyUrl ? new ProxyAgent(proxyUrl) : undefined
+  const agent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined
   console.log('[WhatsApp] 代理配置:', proxyUrl || '无')
 
   sock = makeWASocket({
@@ -452,8 +460,13 @@ export async function startWhatsappBot() {
 
         if (!msg.message) continue
 
-        const jid = msg.key.remoteJid
-        if (!jid) continue
+        const rawJid = msg.key.remoteJid
+        if (!rawJid) continue
+        // @lid 是 Bot 自身 linked device，统一用 sock.user.id（真实手机号 JID）作为 chatId
+        // 同时去掉 :device 后缀（如 8613588818853:3@s.whatsapp.net → 8613588818853@s.whatsapp.net）
+        const jid = rawJid.endsWith('@lid')
+          ? sock.user.id.replace(/:\d+@/, '@')
+          : rawJid
 
         // 允许自己给自己发消息（多设备登录场景）
         // 只要不是从其他设备发的消息就可以处理

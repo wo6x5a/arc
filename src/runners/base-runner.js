@@ -204,9 +204,14 @@ export class BaseRunner {
         flushTimer = setTimeout(flushBuffer, 500)
       }
 
+      const cancelFlush = () => {
+        if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
+      }
+
       const ctx = {
         appendText: (text) => { textBuffer += text },
         scheduleFlush,
+        cancelFlush,
         onToolUse,
         onOutput,
         setSessionId: (sid) => { if (!resolvedSessionId) resolvedSessionId = sid },

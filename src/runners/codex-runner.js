@@ -73,7 +73,7 @@ export class CodexRunner extends BaseRunner {
    * 部分事件类型基于推测，如不匹配请查日志调整
    */
   async handleMessage(msg, ctx) {
-    const { appendText, scheduleFlush, onToolUse, onOutput, setSessionId, flushBuffer, reject, state } = ctx
+    const { appendText, scheduleFlush, onToolUse, onOutput, setSessionId, flushBuffer, cancelFlush, reject, state } = ctx
 
     if (msg.thread_id) setSessionId(msg.thread_id)
 
@@ -87,7 +87,17 @@ export class CodexRunner extends BaseRunner {
         break
       }
 
-      // 流式文本增量
+      // 实测格式：item.completed，文本在 msg.item.text
+      case 'item.completed': {
+        const text = msg.item?.text || msg.item?.content || ''
+        if (typeof text === 'string' && text.trim()) {
+          appendText(text + '\n')
+          scheduleFlush()
+        }
+        break
+      }
+
+      // 流式文本增量（备用）
       case 'message.delta':
       case 'text.delta': {
         const text = msg.content || msg.text || msg.delta || ''
@@ -98,7 +108,7 @@ export class CodexRunner extends BaseRunner {
         break
       }
 
-      // 完整消息（非流式或最终版本）
+      // 完整消息（备用）
       case 'message.completed':
       case 'message': {
         const content = msg.content || ''
@@ -140,6 +150,7 @@ export class CodexRunner extends BaseRunner {
 
       // 执行完成
       case 'turn.completed': {
+        cancelFlush()
         await flushBuffer()
         break
       }

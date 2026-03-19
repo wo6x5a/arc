@@ -9,7 +9,7 @@ npm version minor   # 新功能 1.0.1 -> 1.1.0
 npm version major   # 不兼容 1.0.1 -> 2.0.0
 
 # 2. 发布到 npm
-npm publish
+npm publish --registry https://registry.npmjs.org
 
 # 3. 推送 tag 到 git（可选）
 git push && git push --tags

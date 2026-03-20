@@ -3,7 +3,7 @@ import { promisify } from 'util'
 import {
   sessionManager,
   currentWorkDir, setCurrentWorkDir,
-  chatBackendMap, claudeSessionMap,
+  chatBackendMap, chatModelMap, claudeSessionMap,
   projects, defaultBackend,
 } from './state.js'
 import { getRunner, RUNNERS, getAvailableRunners } from './runners/index.js'
@@ -95,6 +95,7 @@ async function handleCommand(chatId, openId, text) {
       `直接发消息即可让 AI 执行任务。\n\n` +
       `命令：\n` +
       `/ai - 切换 AI 后端\n` +
+      `/model - 切换当前 AI 的模型\n` +
       `/projects - 切换工作项目\n` +
       `/cd <路径> - 切换到自定义工作目录\n` +
       `/clear - 清除对话历史\n` +
@@ -114,6 +115,24 @@ async function handleCommand(chatId, openId, text) {
     }
     pendingMenuMap.set(chatId, { type: 'ai', timestamp: Date.now() })
     await sendText(chatId, buildAiMenuText(chatId))
+    return
+  }
+
+  if (text === '/model') {
+    const backendName = getBackendName(chatId)
+    const runner = getRunner(backendName, currentWorkDir)
+    const models = await runner.fetchModels()
+    if (models.length === 0) {
+      await sendText(chatId, `获取模型列表失败，或 ${RUNNERS[backendName]?.label} 不支持模型切换。`)
+      return
+    }
+    pendingMenuMap.set(chatId, { type: 'model', models, timestamp: Date.now() })
+    const currentModel = chatModelMap.get(chatId) || '（默认）'
+    const lines = models.map((m, i) => {
+      const isCurrent = m === chatModelMap.get(chatId)
+      return `${i + 1}. ${isCurrent ? '✅ ' : ''}${m}`
+    })
+    await sendText(chatId, `请选择模型：\n\n${lines.join('\n')}\n\n回复序号即可切换（当前：${currentModel}）`)
     return
   }
 
@@ -276,8 +295,22 @@ async function handleMenuReply(chatId, num) {
     } else {
       chatBackendMap.set(chatId, key)
       claudeSessionMap.delete(chatId)
+      chatModelMap.delete(chatId)
       await sendText(chatId, `✅ 已切换到 ${emoji} ${label}\n对话历史已自动清除`)
     }
+    return true
+  }
+
+  if (pending.type === 'model') {
+    const models = pending.models || []
+    const selected = models[num - 1]
+    if (!selected) {
+      await sendText(chatId, `序号无效，请回复 1~${models.length} 之间的数字。`)
+      return true
+    }
+    chatModelMap.set(chatId, selected)
+    claudeSessionMap.delete(chatId)
+    await sendText(chatId, `✅ 已切换到模型：${selected}\n对话历史已自动清除`)
     return true
   }
 
@@ -316,6 +349,7 @@ async function handleTask(chatId, userMessage) {
         prompt: userMessage,
         session,
         resumeSessionId,
+        model: chatModelMap.get(chatId) || null,
         onOutput: async (text) => {
           try { await sendText(chatId, text) } catch (err) { console.error('[飞书] 发送消息失败:', err.message) }
         },

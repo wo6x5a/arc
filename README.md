@@ -137,13 +137,11 @@ DEFAULT_AI_BACKEND=claude            # claude / gemini / qwen / codex
 WORK_DIR=/Users/your_username/your_project
 PROJECTS=[{"name":"项目A","path":"/path/a"},{"name":"项目B","path":"/path/b"}]
 
-# 三方 Claude API（可选，使用官方账号时不填）
-ANTHROPIC_AUTH_TOKEN=your_token
-ANTHROPIC_BASE_URL=https://your-api-endpoint.com/api
-
 # ngrok token，使用 /tunnel 命令必填
 NGROK_AUTHTOKEN=your_ngrok_token
 ```
+
+> **注意**：Claude Code、Gemini CLI、Qwen Code、Codex 等 AI CLI 的 API Key 均保存在各自的本地配置文件里（如 `~/.claude/`），启动时自动读取，**无需在 `.env` 中重复配置**。
 
 ### 第三步：启动
 

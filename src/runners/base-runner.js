@@ -35,11 +35,20 @@ export class BaseRunner {
 
   /**
    * 构建命令行参数数组
-   * @param {{ prompt: string, resumeSessionId: string|null }} options
+   * @param {{ prompt: string, resumeSessionId: string|null, model: string|null }} options
    * @returns {string[]}
    */
   buildArgs(_options) {
     throw new Error(`${this.constructor.name} must implement buildArgs()`)
+  }
+
+  /**
+   * 动态获取该后端支持的模型列表
+   * 子类可覆盖，默认返回空数组（表示不支持模型切换）
+   * @returns {Promise<string[]>}
+   */
+  async fetchModels() {
+    return []
   }
 
   /**
@@ -146,12 +155,12 @@ export class BaseRunner {
    * 执行（带自动重试）
    * session 过期时自动用新 session 重试一次
    */
-  async run({ prompt, session, onOutput, onToolUse, resumeSessionId }) {
-    return this._runOnce({ prompt, session, onOutput, onToolUse, resumeSessionId })
+  async run({ prompt, session, onOutput, onToolUse, resumeSessionId, model }) {
+    return this._runOnce({ prompt, session, onOutput, onToolUse, resumeSessionId, model })
       .catch(async (err) => {
         if (resumeSessionId && !session.abortController.signal.aborted) {
           console.log(`[${this.displayName}] 会话恢复失败，自动重新开始新对话：${err.message}`)
-          return this._runOnce({ prompt, session, onOutput, onToolUse, resumeSessionId: null })
+          return this._runOnce({ prompt, session, onOutput, onToolUse, resumeSessionId: null, model })
         }
         throw err
       })
@@ -161,10 +170,10 @@ export class BaseRunner {
    * 核心执行逻辑（模板方法）
    * @returns {Promise<string|null>} sessionId（用于下次 resume）
    */
-  async _runOnce({ prompt, session, onOutput, onToolUse, resumeSessionId }) {
+  async _runOnce({ prompt, session, onOutput, onToolUse, resumeSessionId, model }) {
     return new Promise((resolve, reject) => {
       const env = this.buildEnv()
-      const args = this.buildArgs({ prompt, resumeSessionId })
+      const args = this.buildArgs({ prompt, resumeSessionId, model })
 
       if (resumeSessionId) {
         console.log(`[${this.displayName}] 恢复会话 session_id=${resumeSessionId}`)

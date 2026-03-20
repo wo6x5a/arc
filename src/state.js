@@ -11,6 +11,7 @@ export function setCurrentWorkDir(path) {
 
 // Per-chatId 状态（Telegram chatId 是数字，飞书 chatId 是 oc_ 字符串，天然不冲突）
 export const chatBackendMap = new Map()    // chatId -> 'claude'|'gemini'|'qwen'|'codex'
+export const chatModelMap = new Map()      // chatId -> modelName（每个 chat 独立的模型选择）
 export const claudeSessionMap = new Map()  // chatId -> sessionId（多轮对话恢复）
 export const pendingCustomDir = new Map()  // chatId -> messageId（仅 Telegram 用）
 

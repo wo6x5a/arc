@@ -1,4 +1,5 @@
 import { realpathSync, existsSync } from 'fs'
+import { execSync } from 'child_process'
 import { BaseRunner } from './base-runner.js'
 
 const NODE_BIN = realpathSync(process.execPath)
@@ -14,7 +15,16 @@ export class ClaudeRunner extends BaseRunner {
 
   get binPath() { return NODE_BIN }
 
-  buildArgs({ prompt, resumeSessionId }) {
+  async fetchModels() {
+    try {
+      const out = execSync(`${NODE_BIN} ${CLAUDE_BIN} models`, { encoding: 'utf8', timeout: 10000 })
+      return out.trim().split('\n').map(l => l.trim()).filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+
+  buildArgs({ prompt, resumeSessionId, model }) {
     const args = [
       CLAUDE_BIN,
       '-p', prompt,
@@ -23,6 +33,7 @@ export class ClaudeRunner extends BaseRunner {
       '--dangerously-skip-permissions',
       '--append-system-prompt', SYSTEM_PROMPT,
     ]
+    if (model) args.push('--model', model)
     if (resumeSessionId) args.push('--resume', resumeSessionId)
     return args
   }

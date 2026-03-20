@@ -5,7 +5,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent'
 import {
   sessionManager,
   currentWorkDir, setCurrentWorkDir,
-  chatBackendMap, claudeSessionMap, pendingCustomDir,
+  chatBackendMap, chatModelMap, claudeSessionMap, pendingCustomDir,
   projects, defaultBackend, allowedUserIds,
 } from './state.js'
 import { getRunner, RUNNERS, getAvailableRunners } from './runners/index.js'
@@ -94,6 +94,7 @@ export function startTelegramBot() {
       `直接发送消息即可让 AI 执行任务。\n\n` +
       `命令：\n` +
       `/ai - 切换 AI 后端（Claude/Gemini/Qwen）\n` +
+      `/model - 切换当前 AI 的模型\n` +
       `/projects - 切换工作项目\n` +
       `/cd <路径> - 切换到自定义工作目录\n` +
       `/clear - 清除对话历史，开始新对话\n` +
@@ -117,7 +118,8 @@ export function startTelegramBot() {
     await bot.sendMessage(chatId,
       `命令列表：\n\n` +
       `AI 后端：\n` +
-      `/ai - 切换 AI 后端，当前：${backendLabel}\n\n` +
+      `/ai - 切换 AI 后端，当前：${backendLabel}\n` +
+      `/model - 切换当前 AI 的模型\n\n` +
       `基础命令：\n` +
       `/projects - 列出预设项目，点按钮切换工作目录\n` +
       `/cd <路径> - 切换到自定义工作目录\n` +
@@ -185,6 +187,32 @@ export function startTelegramBot() {
         `当前状态：空闲\n当前 AI：${backendLabel}\n工作目录：${currentWorkDir}\n对话历史：${hasHistory ? '有（发送 /clear 可清除）' : '无'}`
       )
     }
+  })
+
+  // 处理 /model 命令 - 切换当前后端的模型
+  bot.onText(/\/model/, async (msg) => {
+    const chatId = msg.chat.id
+    const userId = msg.from.id
+    if (!isAuthorized(userId)) return
+
+    const backendName = getBackendName(chatId)
+    const runner = getRunnerForChat(chatId)
+    const models = await runner.fetchModels()
+    if (models.length === 0) {
+      return bot.sendMessage(chatId, `获取模型列表失败，或 ${RUNNERS[backendName]?.label} 不支持模型切换。`)
+    }
+
+    const currentModel = chatModelMap.get(chatId) || null
+    const inline_keyboard = models.map(m => {
+      const isCurrent = m === currentModel
+      return [{ text: isCurrent ? `✅ ${m}` : m, callback_data: `switch_model_${m}` }]
+    })
+
+    const currentLabel = currentModel || '（默认）'
+    await bot.sendMessage(chatId,
+      `当前模型：${currentLabel}\n后端：${RUNNERS[backendName]?.label}\n\n请选择模型：`,
+      { reply_markup: { inline_keyboard } }
+    )
   })
 
   // 处理 /ai 命令 - 切换 AI 后端
@@ -367,6 +395,32 @@ export function startTelegramBot() {
     const data = callbackQuery.data
     await bot.answerCallbackQuery(callbackQuery.id)
 
+    // 切换模型
+    if (data.startsWith('switch_model_')) {
+      const newModel = data.replace('switch_model_', '')
+      const backendName = getBackendName(chatId)
+      const runner = getRunnerForChat(chatId)
+      const models = await runner.fetchModels()
+
+      chatModelMap.set(chatId, newModel)
+      claudeSessionMap.delete(chatId)
+
+      const inline_keyboard = models.map(m => {
+        const isCurrent = m === newModel
+        return [{ text: isCurrent ? `✅ ${m}` : m, callback_data: `switch_model_${m}` }]
+      })
+
+      await bot.editMessageText(
+        `✅ 已切换到模型：${newModel}\n对话历史已自动清除`,
+        {
+          chat_id: chatId,
+          message_id: callbackQuery.message.message_id,
+          reply_markup: inline_keyboard.length > 0 ? { inline_keyboard } : undefined
+        }
+      )
+      return
+    }
+
     // 切换 AI 后端
     if (data.startsWith('switch_ai_')) {
       const newBackend = data.replace('switch_ai_', '')
@@ -379,6 +433,7 @@ export function startTelegramBot() {
 
       chatBackendMap.set(chatId, newBackend)
       claudeSessionMap.delete(chatId)
+      chatModelMap.delete(chatId)
 
       const { label, emoji } = RUNNERS[newBackend]
       const inline_keyboard = getAvailableRunners().map(([key, r]) => {
@@ -496,6 +551,7 @@ export function startTelegramBot() {
           prompt: userMessage,
           session,
           resumeSessionId,
+          model: chatModelMap.get(chatId) || null,
           onOutput: async (text) => {
             try {
               await sendLongMessage(bot, chatId, text)

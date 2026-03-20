@@ -40,7 +40,16 @@ export class CodexRunner extends BaseRunner {
 
   get binPath() { return CODEX_BIN }
 
-  buildArgs({ prompt, resumeSessionId }) {
+  async fetchModels() {
+    try {
+      const out = execSync(`${CODEX_BIN} models`, { encoding: 'utf8', timeout: 10000 })
+      return out.trim().split('\n').map(l => l.trim()).filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+
+  buildArgs({ prompt, resumeSessionId, model }) {
     if (resumeSessionId) {
       // 恢复会话：codex exec resume <thread_id> <prompt>
       return [
@@ -48,6 +57,7 @@ export class CodexRunner extends BaseRunner {
         '--json',
         '--dangerously-bypass-approvals-and-sandbox',
         '--skip-git-repo-check',
+        ...(model ? ['--model', model] : []),
         resumeSessionId,
         prompt,
       ]
@@ -58,6 +68,7 @@ export class CodexRunner extends BaseRunner {
       '--json',
       '--dangerously-bypass-approvals-and-sandbox',
       '--skip-git-repo-check',
+      ...(model ? ['--model', model] : []),
       '-C', this.workDir,
       prompt,
     ]

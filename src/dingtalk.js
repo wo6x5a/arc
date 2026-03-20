@@ -4,7 +4,7 @@ import { promisify } from 'util'
 import {
   sessionManager,
   currentWorkDir, setCurrentWorkDir,
-  chatBackendMap, claudeSessionMap,
+  chatBackendMap, chatModelMap, claudeSessionMap,
   projects, defaultBackend,
 } from './state.js'
 import { getRunner, RUNNERS, getAvailableRunners } from './runners/index.js'
@@ -117,6 +117,24 @@ async function sendProjectMenu(chatId, sessionWebhook) {
   await sendTextMenu(sessionWebhook, chatId, `切换工作项目（当前：${currentWorkDir}）`, btns)
 }
 
+// ─── 模型切换菜单 ─────────────────────────────────────────
+async function sendModelMenu(chatId, sessionWebhook) {
+  const backendName = getBackendName(chatId)
+  const runner = getRunner(backendName, currentWorkDir)
+  const models = await runner.fetchModels()
+  if (models.length === 0) {
+    await sendText(sessionWebhook, `获取模型列表失败，或 ${RUNNERS[backendName]?.label} 不支持模型切换。`)
+    return
+  }
+  const currentModel = chatModelMap.get(chatId)
+  const btns = models.map(m => ({
+    title: m === currentModel ? `✅ ${m}（当前）` : m,
+    cmd: `/model ${m}`,
+  }))
+  const currentLabel = currentModel || '（默认）'
+  await sendTextMenu(sessionWebhook, chatId, `切换模型（当前：${currentLabel}）`, btns)
+}
+
 // ─── 命令处理 ─────────────────────────────────────────────
 async function handleCommand(chatId, _senderId, sessionWebhook, text) {
   if (text === '/whoami') {
@@ -134,6 +152,7 @@ async function handleCommand(chatId, _senderId, sessionWebhook, text) {
       `命令：\n` +
       `/ai - 切换 AI 后端\n` +
       `/ai [claude/qwen/gemini/codex]- 切换 AI 后端\n` +
+      `/model - 切换当前 AI 的模型\n` +
       `/projects - 切换工作项目\n` +
       `/cd <路径> - 切换到自定义工作目录\n` +
       `/clear - 清除对话历史\n` +
@@ -161,12 +180,26 @@ async function handleCommand(chatId, _senderId, sessionWebhook, text) {
       } else {
         chatBackendMap.set(chatId, arg)
         claudeSessionMap.delete(chatId)
+        chatModelMap.delete(chatId)
         const { label, emoji } = RUNNERS[arg]
         console.log(`[钉钉] 切换成功, chatBackendMap size=${chatBackendMap.size}, 当前=${chatBackendMap.get(chatId)}`)
         await sendText(sessionWebhook, `✅ 已切换到 ${emoji} ${label}\n对话历史已自动清除`)
       }
     } else {
       await sendAiMenu(chatId, sessionWebhook)
+    }
+    return
+  }
+
+  if (text === '/model' || text.startsWith('/model ')) {
+    const arg = text.slice(6).trim()
+    if (arg) {
+      // 直接切换（来自菜单按钮）
+      chatModelMap.set(chatId, arg)
+      claudeSessionMap.delete(chatId)
+      await sendText(sessionWebhook, `✅ 已切换到模型：${arg}\n对话历史已自动清除`)
+    } else {
+      await sendModelMenu(chatId, sessionWebhook)
     }
     return
   }
@@ -338,6 +371,7 @@ async function handleTask(chatId, sessionWebhook, userMessage) {
         prompt: userMessage,
         session,
         resumeSessionId,
+        model: chatModelMap.get(chatId) || null,
         onOutput: async (text) => {
           try { await sendText(sessionWebhook, text) } catch (err) { console.error('[钉钉] 发送消息失败:', err.message) }
         },

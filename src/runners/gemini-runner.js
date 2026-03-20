@@ -33,12 +33,22 @@ export class GeminiRunner extends BaseRunner {
 
   get binPath() { return GEMINI_BIN }
 
-  buildArgs({ prompt, resumeSessionId }) {
+  async fetchModels() {
+    try {
+      const out = execSync(`${GEMINI_BIN} models`, { encoding: 'utf8', timeout: 10000 })
+      return out.trim().split('\n').map(l => l.trim()).filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+
+  buildArgs({ prompt, resumeSessionId, model }) {
     const args = [
       '-p', prompt,
       '--output-format', 'stream-json',
       '-y',
     ]
+    if (model) args.push('--model', model)
     if (resumeSessionId) {
       args.push('--resume', resumeSessionId)
     }

@@ -27,11 +27,21 @@ export class QwenRunner extends BaseRunner {
 
   get binPath() { return QWEN_BIN }
 
-  buildArgs({ prompt, resumeSessionId }) {
+  async fetchModels() {
+    try {
+      const out = execSync(`${QWEN_BIN} models`, { encoding: 'utf8', timeout: 10000 })
+      return out.trim().split('\n').map(l => l.trim()).filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+
+  buildArgs({ prompt, resumeSessionId, model }) {
     const args = [
       '--output-format', 'stream-json',
       '-y',  // yolo 模式：自动接受所有操作
     ]
+    if (model) args.push('--model', model)
     if (resumeSessionId) {
       args.push('--resume', resumeSessionId)
     }

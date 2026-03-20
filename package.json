@@ -1,6 +1,6 @@
 {
   "name": "arc-bot",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "ARC (AI Remote Coding) - Control AI coding agents via messaging apps",
   "type": "module",
   "main": "src/main.js",

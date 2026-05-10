@@ -3,13 +3,20 @@ import { execSync } from 'child_process'
 import { BaseRunner } from './base-runner.js'
 
 const NODE_BIN = realpathSync(process.execPath)
-let CLAUDE_BIN = process.env.CLAUDE_BIN || '/Users/chenwu.lcw/.npm-global/bin/claude'
-try { CLAUDE_BIN = realpathSync(CLAUDE_BIN) } catch { /* 路径不存在，保留原始值 */ }
+
+function _findClaudeBin() {
+  if (process.env.CLAUDE_BIN) return process.env.CLAUDE_BIN
+  try { return execSync('which claude', { encoding: 'utf8' }).trim() } catch {}
+  return 'claude'
+}
+const CLAUDE_BIN = _findClaudeBin()
 
 const SYSTEM_PROMPT = '重要：如果需要启动长期运行的服务（如 npm run dev、npm start、python app.py 等），必须用后台方式运行，例如：nohup npm run dev > /tmp/app.log 2>&1 & 然后输出服务已在后台启动，PID 为 xxx。'
 
 export class ClaudeRunner extends BaseRunner {
-  static isAvailable() { return existsSync(CLAUDE_BIN) }
+  static isAvailable() {
+    return existsSync(CLAUDE_BIN) || (() => { try { execSync(`which ${CLAUDE_BIN}`, { stdio: 'ignore' }); return true } catch { return false } })()
+  }
 
   get displayName() { return 'Claude Code' }
 
